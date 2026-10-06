@@ -1,5 +1,18 @@
 # Architecture
 
+How the pipeline is put together: the components, the order a run follows, and where each kind of data is stored.
+
+## Contents
+
+- [Diagram](#diagram)
+- [Services](#services)
+- [Weekly run: `full_ingestion_job`](#weekly-run-full_ingestion_job)
+- [Schemas](#schemas)
+- [Data model](#data-model)
+- [Where state lives](#where-state-lives)
+
+## Diagram
+
 ```
 ┌───────────────────────── SOURCES ──────────────────────────┐
 │  TMDB API · Simkl API · Hardcover API · OpenLibrary API    │
@@ -78,29 +91,31 @@
 │    meta.pipeline_alerts (/health goes red)                 │
 └────────────────────────────────────────────────────────────┘
 
-Postgres 15 (content_db) holds all pipeline data underneath every box above.
-Dagster keeps its own run history in SQLite and Metabase its app DB in H2.
-A postgres-backup sidecar pg_dumps it daily to ./backups/postgres (last 14 kept).
+Postgres 15 (content_db) holds all pipeline data shown above.
+Dagster keeps its run history in SQLite; Metabase keeps its own data in H2.
+The postgres-backup container dumps content_db daily (last 14 kept).
 ```
 
 ## Services
 
-All eight run from one `docker-compose.yml`.
+All eight services are defined in one `docker-compose.yml`.
 
 | Service | Port | Role |
 | --- | --- | --- |
 | `postgres` | 5432 | Postgres 15, database `content_db`: `raw`, `staging`, `marts`, and `meta` schemas |
-| `dagster-code` | (internal gRPC) | Code server holding the jobs, ops, schedule, and sensor; also runs dbt as a subprocess |
+| `dagster-code` | internal only | Holds the jobs, ops, schedule, and sensor, and runs dbt |
 | `dagster` | 3000 | Dagster webserver (UI, run launching, run history) |
 | `dagster-daemon` | none | Fires the weekly schedule and the run-failure sensor |
-| `ollama` | 11434 | Local LLM inference; keeps both models loaded (`OLLAMA_MAX_LOADED_MODELS=2`, no idle unload) |
+| `ollama` | 11434 | Local LLM inference. Both models stay loaded in memory to avoid slow reloads. |
 | `flask` | 5000 | Picks page, `/ask`, `/not-interested`, `/health`, `/usage` |
-| `metabase` | 4000 | BI dashboards over `content_db` |
+| `metabase` | 4000 | Dashboards over `content_db` (see the README's Dashboards section) |
 | `postgres-backup` | none | Daily `pg_dump` of `content_db` to `./backups/postgres`, last 14 kept |
 
 ## Weekly run: `full_ingestion_job`
 
-Ops run in dependency order; independent branches run in parallel.
+Steps run in dependency order, and independent branches run in parallel.
+
+![full_ingestion_job op graph in the Dagster UI](images/dagster-job-graph.png)
 
 1. **Ingest:** `ingest_tmdb_movies`, `ingest_tmdb_shows`, `ingest_simkl_ratings`, and `ingest_hardcover_books` run in parallel.
 2. **Merge ids:** TMDB discovery ids and Simkl watched ids are merged per content type (`merge_movie_ids`, `merge_show_ids`).
@@ -110,7 +125,171 @@ Ops run in dependency order; independent branches run in parallel.
 6. **Book discovery:** `discover_openlibrary_books` searches OpenLibrary by top subjects and authors, followed by a second `dbt run` and `dbt test` so new books become candidates.
 7. **Recommendations:** `generate_recommendations` replaces `meta.daily_recommendations_watch` (10 picks) and `meta.daily_recommendations_books` (5 picks).
 
-The other eight jobs run single steps of this chain on demand (for example `recommendation_job` or `simkl_ingestion_job`).
+The other eight jobs run parts of this chain on demand, for example `simkl_ingestion_job` or `recommendation_job`.
+
+## Schemas
+
+All pipeline data lives in one Postgres database, `content_db`, split into four schemas. Each schema has one owner.
+
+| Schema | What it holds | Owner | Rebuilt each run? |
+| --- | --- | --- | --- |
+| `raw` | Source data exactly as each API sent it (7 tables) | Ingestion ops | No, rows are upserted |
+| `staging` | Cleaned, typed, deduplicated views (5 views) | dbt | Yes (views) |
+| `marts` | Dimensions, bridge tables, and facts for analysis (10 tables) | dbt | Yes, except the two fact tables, which update incrementally |
+| `meta` | App state and settings (7 tables) | Dagster ops, Flask, and the user | No, created once by `init_db.py` |
+
+**Why `meta` is separate from `marts`**
+
+- dbt rebuilds `marts` from `raw` on every run, so anything stored there would be overwritten.
+- `meta` holds data that cannot be rebuilt from `raw`:
+  - **Computed results:** taste profile history, current picks, failed-run alerts, `/ask` usage.
+  - **User input:** recommendation settings (`user_config`) and dismissed titles (`not_interested`).
+- Keeping one owner per schema avoids conflicts. dbt never touches `meta`, and the ops never write to `marts`.
+
+## Data model
+
+The analytical layer (`marts`) is a star schema built by dbt. The app layer (`meta`) stores what the pipeline computes and what the user sets. Solid lines are relationships enforced by dbt tests; dashed lines are references by `content_id` that are not enforced.
+
+### Marts (dbt)
+
+```mermaid
+erDiagram
+    dim_watchable ||--o{ bridge_content_genre : "tagged with"
+    dim_genre ||--o{ bridge_content_genre : "applies to"
+    dim_watchable ||--o{ bridge_content_platform : "streams on"
+    dim_platform ||--o{ bridge_content_platform : "carries"
+    dim_watchable ||--o| fact_watch_history : "watched as"
+    dim_book ||--o{ bridge_content_book_subject : "tagged with"
+    dim_book_subject ||--o{ bridge_content_book_subject : "applies to"
+    dim_book ||--o| fact_reading_history : "read as"
+
+    dim_watchable {
+        text content_id PK "movie_id or tv_id"
+        text content_type "movie or tv"
+        text title
+        text original_language
+        text primary_creator "director or creator"
+        float vote_average "TMDB rating"
+        int number_of_episodes
+        bool is_serial_format "soaps and serials"
+    }
+    dim_genre {
+        bigint genre_id PK
+        text genre_name
+    }
+    dim_platform {
+        bigint platform_id PK
+        text platform_name
+    }
+    bridge_content_genre {
+        text content_id FK
+        bigint genre_id FK
+    }
+    bridge_content_platform {
+        text content_id FK
+        bigint platform_id FK
+    }
+    fact_watch_history {
+        text content_id PK, FK
+        int rating "1 to 10"
+        text consumption_status
+        timestamp interaction_date
+        timestamp source_ingested_at "incremental marker"
+    }
+    dim_book {
+        text content_id PK "book_ol_key"
+        text title
+        text primary_creator "author"
+        int release_year
+        int page_count
+    }
+    dim_book_subject {
+        bigint subject_id PK
+        text subject_name
+    }
+    bridge_content_book_subject {
+        text content_id FK
+        bigint subject_id FK
+    }
+    fact_reading_history {
+        text content_id PK, FK
+        float rating "1 to 10"
+        float native_rating "1 to 5"
+        text consumption_status
+        timestamp interaction_date
+        timestamp source_ingested_at "incremental marker"
+    }
+```
+
+- **`dim_watchable`** combines movies and TV in one dimension, so a query never needs to know which source a title came from.
+- **Bridge tables** link titles to genres, platforms, and book subjects, because each title can have many of each.
+- **Two fact tables** hold the personal history: one row per watched title and one row per book. They are separate because watching and reading come from different sources and carry different details.
+- **Both fact tables update incrementally**, processing only rows whose source changed (`source_ingested_at`).
+
+### Meta (app state)
+
+```mermaid
+erDiagram
+    dim_watchable ||..o| daily_recommendations_watch : "picked as"
+    dim_book ||..o| daily_recommendations_books : "picked as"
+    dim_watchable ||..o| not_interested : "dismissed as"
+    dim_book ||..o| not_interested : "dismissed as"
+
+    dim_watchable {
+        text content_id PK
+    }
+    dim_book {
+        text content_id PK
+    }
+    daily_recommendations_watch {
+        int id PK
+        text content_id "title picked"
+        int rank "1 to 10"
+        text reason
+        float predicted_score
+        timestamp generated_at
+    }
+    daily_recommendations_books {
+        int id PK
+        text content_id "book picked"
+        int rank "1 to 5"
+        text reason
+        timestamp generated_at
+    }
+    not_interested {
+        text content_id PK "dismissed title"
+        timestamp marked_at
+    }
+    taste_profile {
+        int id PK
+        timestamp generated_at
+        jsonb top_genres_watch
+        jsonb top_creators_watch
+        jsonb top_genres_read
+        int total_rated
+    }
+    user_config {
+        text config_key PK
+        jsonb config_value
+    }
+    pipeline_alerts {
+        text run_id PK
+        text job_name
+        timestamp failed_at
+        bool email_sent
+    }
+    api_usage {
+        date date PK
+        text feature PK
+        int tokens_used
+        int call_count
+    }
+```
+
+- **Picks** (`daily_recommendations_watch` and `daily_recommendations_books`) are replaced on every run.
+- **`taste_profile`** gains a new row on every run, so its history is kept.
+- **`not_interested`** and **`user_config`** hold user input. That is why they live in `meta`: dbt rebuilds `marts` each run and would overwrite them.
+- **References to `marts` are not foreign keys.** The marts tables are dropped and rebuilt by dbt, so a database-level constraint would block every rebuild.
 
 ## Where state lives
 

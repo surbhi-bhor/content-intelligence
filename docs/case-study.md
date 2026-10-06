@@ -1,61 +1,134 @@
 # Case Study: Personal Content Intelligence Pipeline
 
-## Why I Built This
+## Contents
 
-Every streaming platform only knows what happens inside it. Netflix has no record of a book I finished last month, and Simkl has no record of a Hardcover rating. Recommendations stay siloed inside one app and tuned for its engagement, not my actual taste. Basic questions, like my highest-rated genre or whether I rate movies harder than TV, go unanswered even within one platform. I wanted one taste profile spanning movies, TV, and books, with a way to ask it plain-English questions.
+- [Why I built this](#why-i-built-this)
+- [Design choices](#design-choices)
+- [Challenges and how I handled them](#challenges-and-how-i-handled-them)
+- [Data model](#data-model)
+- [What I would do differently](#what-i-would-do-differently)
+- [Results](#results)
 
-## Architecture Decisions
+## Why I built this
 
-**Raw stays exactly as the source sent it.** Raw tables hold source fields only, upserted idempotently and stamped with the Dagster run id. Every cleaning step, decode, and join lives in dbt staging or marts. The test for a column in `raw` is "did the source send it", not "is it convenient", which kept the layers honest when a join key (Simkl's own `tmdb` id) turned out to belong in raw after all.
+Each streaming or tracking app only sees its own slice of what I watch and read:
 
-**Single Postgres, not a lakehouse.** I rejected an S3/MinIO raw zone. One reproducible datastore is enough at single-user scale, and a daily `pg_dump` covers recovery. A lakehouse's durability guarantees matter at a scale this project doesn't have yet.
+- Netflix has no idea which book I finished last month.
+- Simkl doesn't know how I rated a book on Hardcover.
+- Each app's recommendations are tuned to keep me in that app, rather than to my overall taste.
 
-**dbt, not raw SQL scripts.** Typed, testable, version-controlled transforms. 67 schema tests (keys, foreign keys, accepted values, rating ranges) catch regressions a raw script never would.
+Simple questions, such as "what is my highest-rated genre?" or "do I rate movies more harshly than TV?", were hard to answer anywhere. I wanted one taste profile across movies, TV, and books, and a way to ask it questions in plain English. It also gave me a realistic project to practise end-to-end data engineering on.
 
-**Dagster, not Airflow or cron.** Real data-dependency graphs, not just task ordering. One UI covers schedules, run history and logs, and a failed run re-executes from the exact step that failed.
+## Design choices
 
-**Ollama (local), not Groq or OpenAI.** Zero cost and no dependency on an external API (`llama3.2:1b` for picks, `llama3.2:3b` for `/ask`), at the cost of slower, CPU-bound inference.
+Each choice below fits this project's scale: one user, one machine, and a weekly refresh. At a different scale, several of them would change.
 
-**Text-to-SQL (LangChain + Ollama), not RAG/ChromaDB.** The data is structured, not free text. "My highest-rated genre" needs a real aggregate query, not semantic similarity over embeddings.
+### Keep raw data exactly as the source sent it
 
-**Incremental fact tables, not full refresh.** Keyed on `content_id`, with the source row's `ingested_at` as the watermark. That timestamp only moves when a value really changes, so re-ratings and status changes are picked up without rescanning everything. A post-hook removes rows deleted at the source.
+- **Choice:** raw tables only store fields the API actually returns. Cleaning, decoding, and joins happen later, in dbt.
+- **Why:** it keeps a faithful copy of each source, so any transformation can be rebuilt or fixed later.
+- **What I learned:** the rule is "did the source send it?", not "is it convenient?". At one point I wrongly removed a join key from raw, before realising Simkl sends that id itself.
 
-**Flask, not FastAPI or Django.** Six routes and one user. Nothing here would justify an async runtime or an ORM.
+### One Postgres database instead of a lakehouse
 
-## What Was Hard
+- **Choice:** a single Postgres instance, backed up daily with `pg_dump`.
+- **Why:** with one user and a few hundred titles, a separate object-storage layer (S3 or MinIO) would add work without a clear benefit.
+- **Trade-off:** the backups sit on the same machine. If the data or the number of users grew, a raw landing zone in object storage would be the next step.
 
-**Invalid content_ids from Ollama.** The picks model sometimes returned an id that wasn't in its own shortlist. The fix: validate every id before it reaches the database, with a deterministic fallback.
+### dbt for transformations
 
-**"Apple TV+" breaking a content-type filter.** `/ask`'s SQL guard checks that a "TV" question produced a `content_type='tv'` filter. "Movies on Apple TV+" matched `\btv\b` against the platform name, so valid SQL was rejected. Fixed with a negative lookbehind that excludes "Apple TV" specifically.
+- **Choice:** dbt models instead of hand-written SQL scripts.
+- **Why:** transformations are version-controlled and documented, and they come with tests. The 67 tests (keys, foreign keys, allowed values, rating ranges) caught several issues along the way.
 
-**Language and type balance in picks.** TMDB's vote counts skew English, so a global `vote_count >= 10` floor gutted the regional pool (Marathi went from 71 unwatched titles to 2). Fixed with a lower floor for `hi`/`mr` plus a rebalancing pass that enforces per-language slot targets.
+### Dagster for orchestration
 
-**Recommendations quietly losing regional titles.** Streaming availability was read from TMDB's US region, but this is an India-based watch history. 91% of Marathi and 60% of Hindi titles showed no platform, and picks require one, so those pools were nearly empty, with no error anywhere. I found it by profiling missing platforms by language. The fix made the region a user setting and re-fetches details older than 30 days, so availability can't freeze at first fetch either.
+- **Choice:** Dagster rather than Airflow or cron.
+- **Why:** it models real data dependencies between steps, and shows schedules, run history, and logs in one place. A failed run can be re-executed from the step that failed.
 
-**A small model copying its own example.** `/ask` ranked "highest rated book subject" by averaging over just 3 books. The prompt's rules said subjects need at least 5 ratings, but the worked example for that exact question used the creator floor of 2, and the model copied the example over the rule. Fixing the example wasn't enough on its own, so a deterministic repair now adds or raises the minimum-count floor whenever a query ranks by an average. The answer now matches the taste profile the rest of the app uses.
+### Local models through Ollama
 
-**An empty API response that could wipe history.** Simkl delete reconciliation treated "not in this response" as "removed from my Simkl list". An empty-but-successful response would have matched every row and deleted the whole watch history before the zero-row check raised. Reconciliation now skips any content type that came back empty or had validation failures. A missed delete heals on the next run; a wrong one loses data.
+- **Choice:** `llama3.2:1b` for picks and `llama3.2:3b` for `/ask`, both running locally.
+- **Why:** no cost and no reliance on an external API.
+- **Trade-off:** inference runs on the CPU, so `/ask` can take from 40 seconds to a few minutes.
 
-**dbt tests never ran automatically.** A run could succeed with schema violations sitting in `marts`, invisible until someone ran `dbt test` by hand. Fixed by putting a test step in front of every downstream consumer.
+### Text-to-SQL rather than retrieval (RAG)
 
-## Data Model
+- **Choice:** the model writes SQL, and the answer comes from the query results.
+- **Why:** the data is structured. A question like "my highest-rated genre" needs an aggregate query, which similarity search over text can't provide.
 
-`dim_watchable` is the spine: movies and TV conformed into one dimension, so no query cares which source an id came from. Genres and platforms are many-to-many, so they use bridge tables rather than arrays. Watch and reading history are separate fact tables because they have a different grain and a different source. `meta` is split from `marts`: mutable, Dagster-written state (taste profile, recommendations, dismissals) versus dbt-owned dimensional data.
+### Incremental fact tables
 
-## What I'd Do Differently
+- **Choice:** the two fact tables only process rows that changed, using each source row's `ingested_at` timestamp as the marker.
+- **Why:** that timestamp only moves when a value actually changes, so re-ratings and status changes are picked up without rescanning everything. A post-hook removes rows deleted at the source.
 
-- **Start with software-defined assets and `dagster-dbt`.** Running dbt as one subprocess op hides per-model lineage and retries inside a single step. Modelling each table as a Dagster asset from day one would give lineage, partial re-runs, and freshness checks for free.
-- **Write Python tests from the first op.** The dbt layer ended up well tested, but the logic that matters most for quality (id validation, SQL repairs, the delete guard) was verified by hand. Unit tests would have caught regressions sooner and made refactors cheaper.
-- **Add CI before the second contributor, not after.** Linting, unit tests, and `dbt build` against a throwaway Postgres on every push.
-- **Profile assumptions about sources early.** Two of the most expensive bugs came from defaults nobody questioned: a hardcoded US streaming region and a rated-only book filter. A quick per-language and per-status profile of each source on day one would have caught both.
-- **Use hashed surrogate keys.** `row_number()` ids for genres and platforms shift when a new value appears; `dbt_utils.generate_surrogate_key` keeps them stable for anything that stores them.
-- **Build a small eval set for `/ask`.** A fixed list of questions with expected rows turns every prompt or model change into a measurable comparison instead of a hand check.
+### Flask for the web app
+
+- **Choice:** Flask rather than FastAPI or Django.
+- **Why:** six routes and one user didn't call for an async framework or an ORM.
+
+## Challenges and how I handled them
+
+### The picks model returned invalid ids
+
+- **Problem:** the model sometimes returned a title id that wasn't in the shortlist it was given.
+- **Fix:** every id is checked against the shortlist before it is saved, and a deterministic fallback takes over if the model fails.
+
+### "Apple TV+" broke a content-type check
+
+- **Problem:** `/ask` checks that a question about TV produces a `content_type = 'tv'` filter. "Movies on Apple TV+" matched the word "TV" in the platform name, so valid SQL was rejected.
+- **Fix:** the check now ignores "Apple TV".
+
+### Regional titles were filtered out by vote counts
+
+- **Problem:** TMDB vote counts are much higher for English titles. A single minimum of 10 votes reduced the unwatched Marathi titles from 71 to 2.
+- **Fix:** a lower minimum for Hindi and Marathi, plus a pass that fills each language's share of the picks.
+
+### Recommendations were quietly losing regional titles
+
+- **Problem:** streaming availability was read for the US, but this is an India-based history. 91% of Marathi and 60% of Hindi titles showed no platform. Picks require one, so those languages had almost no candidates, and nothing raised an error.
+- **How I found it:** by counting titles without a platform, broken down by language.
+- **Fix:** the region is now a setting, and title details are re-fetched every 30 days so availability stays current.
+
+### Daily soaps and TV serials slipped into the picks
+
+- **Problem:** a variety show with 191 episodes in a single season appeared in the picks. The old check only blocked shows with more than 300 episodes in total.
+- **Fix:** shows are now flagged using episodes per season together with vote count, in one column (`is_serial_format`) that both the picks and the replacement logic use. Popular long-running series such as One Piece are not affected.
+
+### A small model copied its own example
+
+- **Problem:** `/ask` answered "highest-rated book subject" with a subject based on only 3 books. The prompt said subjects need at least 5 ratings, but the worked example in the prompt used the creator minimum of 2, and the model followed the example.
+- **Fix:** I corrected the example and added a code-level repair that applies the right minimum whenever a query ranks by an average. The answer now matches the taste profile.
+
+### An empty API response could have wiped the watch history
+
+- **Problem:** titles missing from the latest Simkl response were deleted. A successful but empty response would have deleted the entire history.
+- **Fix:** deletion is skipped when the response is empty or contains invalid records. A missed deletion is corrected on the next run, while a wrong one would lose data.
+
+### dbt tests didn't run automatically
+
+- **Problem:** a run could finish successfully with test failures in `marts`, and nobody would know.
+- **Fix:** a test step now runs before anything uses the marts, and a failure stops the run.
+
+## Data model
+
+- **`dim_watchable`** is the central dimension. Movies and TV are combined into one table, so queries don't depend on which source a title came from.
+- **Genres and platforms** relate to titles many-to-many, so they use bridge tables rather than arrays.
+- **Watch history and reading history** are separate fact tables, because they come from different sources and have different details.
+- **`meta`** is kept separate from `marts`. It holds data the app produces or the user enters (taste profile, picks, dismissed titles, settings), which dbt must not overwrite.
+
+## What I would do differently
+
+- **Use Dagster assets with `dagster-dbt` from the start.** dbt currently runs as one step, which hides per-model lineage and retries. Defining each table as an asset would provide lineage, partial re-runs, and freshness checks.
+- **Write Python tests from the first step.** The dbt layer is well tested, but the logic that matters most for quality (id validation, SQL repairs, the delete guard) was checked by hand.
+- **Set up CI early.** Linting, unit tests, and `dbt build` against a temporary database on every push.
+- **Check assumptions about each source on day one.** Two costly bugs came from defaults I didn't question: a US-only streaming region and a filter that only fetched rated books. A quick breakdown of each source by language and status would have caught both.
+- **Use hashed keys for genres and platforms.** The current numeric ids can change when a new value appears. `dbt_utils.generate_surrogate_key` would keep them stable.
+- **Build a small evaluation set for `/ask`.** A fixed list of questions with expected answers would make every prompt or model change measurable.
 
 ## Results
 
-- 4 source APIs, 7 raw tables, 5 dbt staging views, 10 marts tables, 7 meta tables
-- About 630 movie and TV titles in the catalogue, 118 watched titles and 25 read books in the history
-- 67 dbt tests, all passing
-- 14 Dagster ops, 9 jobs
-- 1 schedule (weekly, Friday noon IST) and 1 run-failure sensor with email alerts
-- 2 Ollama models: `llama3.2:1b` (picks), `llama3.2:3b` (`/ask`)
+- **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 10 marts tables, 7 meta tables.
+- **Data volume:** about 630 movie and TV titles in the catalogue, with roughly 120 watched titles and 25 read books in the history.
+- **Testing:** 67 dbt tests, all passing.
+- **Orchestration:** 14 Dagster ops, 9 jobs, a weekly schedule (Fridays at noon IST), and a failure sensor with email alerts.
+- **Models:** `llama3.2:1b` for picks and `llama3.2:3b` for `/ask`.
