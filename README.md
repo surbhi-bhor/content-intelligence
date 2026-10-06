@@ -114,7 +114,7 @@ Metabase runs at `localhost:4000` and reads the same Postgres warehouse. The mai
 | Tab | What it shows |
 | --- | --- |
 | Content Pipeline | Catalogue size, unwatched candidates (movies and TV), last pipeline run, raw rows ingested |
-| Watch & Ratings | Titles rated, average rating, titles rated this month and this year, most-watched genre, average rating by genre, titles watched per month, top platforms |
+| Watch & Ratings | Titles rated, average rating, titles rated this month, most-watched genre, average rating by genre, titles watched per month, top platforms |
 | Books | Books rated, average book rating, books rated this month, unread book candidates, average rating by book subject |
 | Glossary | Definitions of the terms used on the other tabs |
 
