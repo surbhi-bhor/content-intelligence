@@ -164,6 +164,7 @@ Set these in `.env`; `.env.example` lists every variable.
 | `ASK_READONLY_PASSWORD` | Password for the read-only database role used by `/ask`. Any value works. |
 | `ASK_DATABASE_URL` | Connection string for that role. Replace `your_ask_readonly_password` in it with the value above. |
 | `OLLAMA_BASE_URL`, `OLLAMA_PICKS_MODEL`, `OLLAMA_ASK_MODEL` | The defaults work with Docker Compose. |
+| `APP_TIMEZONE` | Timezone for times shown in the web app (default `Asia/Kolkata`). Data is stored in UTC. |
 | `ALERT_EMAIL_TO`, `SMTP_*` (optional) | Email for failed-run alerts. Gmail needs an App Password. Leave blank to turn email off. |
 
 ### Recommendation settings

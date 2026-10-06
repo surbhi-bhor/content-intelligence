@@ -1,13 +1,27 @@
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import psycopg2
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
 from agent import answer_question
 
 app = Flask(__name__)
+
+# Postgres and the containers run in UTC, so every stored timestamp is UTC.
+# Comparisons stay in UTC; this filter only changes how times are displayed.
+DISPLAY_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
+
+@app.template_filter("local")
+def local_time(value, fmt="%b %d %Y %I:%M%p %Z"):
+    """Render a naive UTC datetime in the display timezone, e.g. 'Oct 06 2026 10:32PM IST'."""
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(DISPLAY_TZ).strftime(fmt)
 
 LANGUAGE_NAMES = {"en": "English", "hi": "Hindi", "mr": "Marathi"}
 

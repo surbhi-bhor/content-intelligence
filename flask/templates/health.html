@@ -140,7 +140,7 @@
         <div class="health-row">
             <span class="health-row-label">Last updated</span>
             <span class="health-row-value">
-                {% if last_run %}{{ last_run.strftime("%b %d %Y %I:%M%p").lower() }}{% else %}never{% endif %}
+                {% if last_run %}{{ last_run|local }}{% else %}never{% endif %}
             </span>
         </div>
         <div class="health-row">
@@ -152,7 +152,7 @@
         <div class="health-row">
             <span class="health-row-label">Last failed run</span>
             <span class="health-row-value {% if failure_is_current %}is-warn{% endif %}">
-                {% if last_failure %}{{ last_failure[0] }} · {{ last_failure[1].strftime("%b %d %Y %I:%M%p").lower() }}{% else %}none{% endif %}
+                {% if last_failure %}{{ last_failure[0] }} · {{ last_failure[1]|local }}{% else %}none{% endif %}
             </span>
         </div>
         <div class="health-row">

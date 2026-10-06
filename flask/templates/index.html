@@ -763,7 +763,7 @@
             </div>
             <div class="sidebar-footer">
                 {% if taste and taste.generated_at %}
-                Profile updated {{ taste.generated_at.strftime("%Y-%m-%d %H:%M") }}
+                Profile updated {{ taste.generated_at|local("%Y-%m-%d %H:%M %Z") }}
                 {% endif %}
             </div>
         </aside>
@@ -772,7 +772,7 @@
             <header class="page-header">
                 <div>
                     <h1>Tonight</h1>
-                    <p class="subtitle">{% if taste %}{{ taste.total_rated }} titles rated{% endif %}{% if picks_generated_at %} &middot; picks from {{ picks_generated_at.strftime("%b %d") }}{% endif %}</p>
+                    <p class="subtitle">{% if taste %}{{ taste.total_rated }} titles rated{% endif %}{% if picks_generated_at %} &middot; picks from {{ picks_generated_at|local("%b %d") }}{% endif %}</p>
                 </div>
                 {% if picks %}
                 <div class="header-filters">
