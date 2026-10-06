@@ -61,6 +61,47 @@ def author_matches(author: str, candidates: list) -> bool:
             return True
     return False
 
+def is_latin_script(text: str) -> bool:
+    """True when every letter is Latin script, accents allowed: 'Emily
+    Brontë', 'Gabriel García Márquez' and 'Vālmīki' pass; '村上春樹' and
+    'Аркадий Стругацкий' do not."""
+    return all("LATIN" in unicodedata.name(ch, "") for ch in text if ch.isalpha())
+
+def english_author_name(names: list, alternative_names: list = ()) -> Optional[str]:
+    """English (Latin-script) form of a book's author for display.
+
+    Open Library often lists the original-script name first ('村上春樹' for
+    Haruki Murakami, '川口俊和' for Toshikazu Kawaguchi). Prefer a Latin name
+    from author_name; otherwise pick one from author_alternative_name, which
+    mixes 'Haruki Murakami', 'MURAKAMI Haruki', 'Kawaguchi, Toshikazu' and
+    other scripts. Skips catalogue forms (commas, semicolons, all-caps
+    words) and takes the first name whose words appear most often, so the
+    common spelling wins over a one-off variant. None if there is no Latin
+    form at all."""
+    for name in names or []:
+        if name and is_latin_script(name):
+            return name.strip()
+
+    latin = [n.strip() for n in (alternative_names or []) if n and is_latin_script(n)]
+
+    def word_set(name: str) -> frozenset:
+        return frozenset(normalize_name(name).split())
+
+    def readable(name: str) -> bool:
+        words = name.split()
+        return (
+            "," not in name and ";" not in name and 2 <= len(words) <= 4
+            and not any(len(w) > 2 and w.isupper() for w in words)
+        )
+
+    counts = {}
+    for name in latin:
+        counts[word_set(name)] = counts.get(word_set(name), 0) + 1
+    readable_names = [n for n in latin if readable(n)]
+    if not readable_names:
+        return None
+    return max(readable_names, key=lambda n: counts[word_set(n)])
+
 def search_openlibrary(title: str, author: Optional[str]) -> Optional[dict]:
     """Title search first, then a free-text title + author search. The
     title search alone missed books Open Library does have: a translated
@@ -266,7 +307,7 @@ def get_known_ol_keys(cur) -> set:
     return {r[0] for r in cur.fetchall()}
 
 _SEARCH_FIELDS = (
-    "key,title,author_name,first_publish_year,subject,language,"
+    "key,title,author_name,author_alternative_name,first_publish_year,subject,language,"
     "ratings_average,ratings_count,number_of_pages_median,"
     "cover_i,edition_count,editions,editions.title,editions.language"
 )
@@ -316,10 +357,12 @@ def _insert_discovered_book(cur, ol_key, title, author, first_publish_year,
         ) VALUES (%s, NULL, %s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (ol_key) DO UPDATE SET
             title = EXCLUDED.title,
+            author = EXCLUDED.author,
             ingested_at = NOW(),
             pipeline_run_id = EXCLUDED.pipeline_run_id
         WHERE raw_books.hardcover_id IS NULL
-          AND raw_books.title IS DISTINCT FROM EXCLUDED.title;
+          AND (raw_books.title IS DISTINCT FROM EXCLUDED.title
+               OR raw_books.author IS DISTINCT FROM EXCLUDED.author);
     """, (
         meta.ol_key, meta.title, meta.author, meta.first_publish_year,
         psycopg2.extras.Json(meta.subjects), meta.ratings_average,
@@ -352,8 +395,7 @@ def _process_discovery_docs(cur, docs, known_keys, run_id, fallback_subjects=Non
             skipped += 1
             continue
 
-        author_names = doc.get("author_name") or []
-        author = author_names[0] if author_names else None
+        author = english_author_name(doc.get("author_name"), doc.get("author_alternative_name"))
         subjects = doc.get("subject", [])[:20] or (fallback_subjects or [])
 
         if _insert_discovered_book(
@@ -369,6 +411,40 @@ def _process_discovery_docs(cur, docs, known_keys, run_id, fallback_subjects=Non
 
 OPENLIB_DISCOVERY_MIN = 5
 
+def fix_non_english_authors(cur, run_id, log) -> int:
+    """Discovered books stored before english_author_name existed (or not
+    returned by this week's searches) can still hold an original-script
+    author. Looks each one up by its work key and stores the English name.
+    Only touches discovered rows; library books take their author from
+    Hardcover. Returns the number of rows fixed."""
+    cur.execute("SELECT ol_key, author FROM raw.raw_books WHERE hardcover_id IS NULL AND author IS NOT NULL;")
+    rows = [(k, a) for k, a in cur.fetchall() if not is_latin_script(a)]
+    fixed = 0
+    for ol_key, author in rows:
+        try:
+            r = requests.get(
+                "https://openlibrary.org/search.json",
+                params={"q": f"key:{ol_key}", "fields": "author_name,author_alternative_name", "limit": 1},
+                timeout=10,
+            )
+            r.raise_for_status()
+            docs = r.json().get("docs") or []
+        except requests.exceptions.RequestException as e:
+            log.warning(f"Author lookup failed for {ol_key}: {e}")
+            continue
+        name = english_author_name(docs[0].get("author_name"), docs[0].get("author_alternative_name")) if docs else None
+        if name is None:
+            log.warning(f"No English author name for {ol_key} ({author}); left unchanged")
+            continue
+        cur.execute(
+            "UPDATE raw.raw_books SET author = %s, ingested_at = NOW(), pipeline_run_id = %s WHERE ol_key = %s;",
+            (name, run_id, ol_key),
+        )
+        fixed += 1
+    if rows:
+        log.info(f"Non-English authors: {fixed} of {len(rows)} replaced with the English name")
+    return fixed
+
 @op(retry_policy=NETWORK_RETRY)
 def discover_openlibrary_books(context, start=None):
     log = get_dagster_logger()
@@ -383,6 +459,8 @@ def discover_openlibrary_books(context, start=None):
         cur.close()
         conn.close()
         return 0
+
+    fix_non_english_authors(cur, run_id, log)
 
     known_keys = get_known_ol_keys(cur)
     inserted = 0

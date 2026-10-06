@@ -47,7 +47,7 @@ How the pipeline is put together: the components, the order a run follows, and w
 │      (incremental on the source ingested_at)               │
 │    book_candidate_scores ◄── unread books vs. reads        │
 │                                                            │
-│  79 schema tests gate everything downstream                │
+│  80 schema tests gate everything downstream                │
 │  Source freshness: warn 8 days, error 15 days              │
 └──────────────────────────────┬─────────────────────────────┘
                                │
@@ -123,7 +123,7 @@ Steps run in dependency order, and independent branches run in parallel.
 3. **Enrich:** `ingest_tmdb_details` and `ingest_tmdb_tv_details` fetch details and streaming platforms for new titles and for titles older than 30 days; `enrich_book_metadata` matches library books to OpenLibrary (by title, then by title and author).
 4. **Transform and test:** `run_dbt_transformations` (`dbt run`), then `run_dbt_tests_op` (`dbt test`). A test failure fails the run here.
 5. **Taste profile:** `build_taste_profile` appends a new row to `meta.taste_profile`.
-6. **Book discovery:** `discover_openlibrary_books` searches OpenLibrary by the specific subjects and authors of books rated 4 stars or more, followed by a second `dbt run` and `dbt test` so new books are scored in `book_candidate_scores`.
+6. **Book discovery:** `discover_openlibrary_books` first replaces any discovered book's author still stored in a non-English script with its English name, then searches OpenLibrary by the specific subjects and authors of books rated 4 stars or more, followed by a second `dbt run` and `dbt test` so new books are scored in `book_candidate_scores`.
 7. **Recommendations:** `generate_recommendations` replaces `meta.daily_recommendations_books` (5 picks) first, then `meta.daily_recommendations_watch` (10 picks).
 
 Every op that calls an outside API (steps 1, 3 and 6) retries twice, after 1 and then 2 minutes, before failing the run.

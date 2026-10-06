@@ -51,7 +51,8 @@ select
     details.number_of_seasons,
     details.number_of_episodes,
     details.episode_runtime_mins,
-    details.creator,
+    -- Display names must be English; a name with no Latin form is blanked.
+    {{ latin_or_null('details.creator') }} as creator,
     details.genres,
     details.platforms,
     details.poster_path,

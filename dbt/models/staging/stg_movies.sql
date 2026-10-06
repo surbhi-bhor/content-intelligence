@@ -51,7 +51,8 @@ select
     details.runtime_mins,
     details.budget,
     details.revenue,
-    details.director,
+    -- Display names must be English; a name with no Latin form is blanked.
+    {{ latin_or_null('details.director') }} as director,
     details.genres,
     details.platforms,
     details.poster_path,

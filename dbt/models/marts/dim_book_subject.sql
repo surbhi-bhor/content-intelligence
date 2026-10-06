@@ -11,6 +11,10 @@ cleaned as (
     select distinct trim(subject_name) as subject_name
     from book_subjects
     where subject_name is not null and trim(subject_name) <> ''
+      -- English tags only: Open Library mixes in French, Spanish, German
+      -- and Polish catalogue tags, which would otherwise show in reasons,
+      -- /ask answers and dashboards.
+      and not {{ is_non_english_subject('trim(subject_name)') }}
 
 )
 

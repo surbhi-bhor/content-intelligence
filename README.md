@@ -108,12 +108,13 @@ Both features follow the same principle: a small local model is useful, but not 
 - **Idempotent loads:** raw writes are upserts (`INSERT ... ON CONFLICT`), and every raw row records the Dagster run that wrote it (`pipeline_run_id`).
 - **Safe deletes:** if Simkl returns an empty or partly invalid response, deletion of missing titles is skipped, so history cannot be wiped by a bad response.
 - **Row-count checks:** an ingestion step fails when a source returns no rows, and warns when it returns fewer than expected.
-- **79 dbt tests:** unique keys, non-null columns, allowed values, foreign keys, composite keys, and rating ranges. A failing test stops the run before the taste profile and picks are rebuilt.
+- **80 dbt tests:** unique keys, non-null columns, allowed values, foreign keys, composite keys, rating ranges, and English-only display text. A failing test stops the run before the taste profile and picks are rebuilt.
 - **Retries:** ops that call an outside API retry twice (after 1, then 2 minutes), so one dropped connection doesn't cancel the week's run.
 - **Freshness checks:** the `/health` page turns yellow when picks are more than 8 days old. `dbt source freshness` (run by hand) warns at 8 days and errors at 15. The ratings tables only update their timestamp when a rating changes, so a quiet month shows as stale there even when runs succeed.
 - **Failure alerts:** every failed run is recorded in `meta.pipeline_alerts` and triggers an email. The `/health` page turns red until a later run succeeds.
 - **Backups:** a backup container runs `pg_dump` daily and keeps the last 14 copies.
-- **Unit tests and CI:** 51 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching). GitHub Actions runs lint, the tests, and a dbt parse on every push.
+- **English-only display text:** everything shown in the app and dashboards is English. Book authors use the English spelling Open Library lists (for example Haruki Murakami rather than the Japanese script), non-English book subject tags are dropped, and any name still in another script is left blank. A dbt test fails the run if non-English script reaches a title, name, genre, platform, or subject.
+- **Unit tests and CI:** 57 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching, English author names). GitHub Actions runs lint, the tests, and a dbt parse on every push.
 
 ## Dashboards (Metabase)
 

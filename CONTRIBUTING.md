@@ -21,6 +21,7 @@
 - **Loads are idempotent.** Raw writes are upserts (`INSERT ... ON CONFLICT`). Every row records the run that wrote it in `pipeline_run_id`, and `ingested_at` only changes when a value actually changes.
 - **Validate before inserting.** Each source has a Pydantic model. Records that fail validation are logged and skipped.
 - **Fail clearly on empty sources.** Ingestion steps fail when an API returns no rows, and warn when it returns fewer than expected.
+- **Display text is English.** Titles, names, genres, platforms, and subjects shown to the user must be in English. Use the `latin_or_null` and `is_non_english_subject` macros in `dbt/macros/english_text.sql` for new text columns; `dbt/tests/assert_display_text_is_english.sql` enforces it.
 - **Settings are data.** Recommendation settings (languages, language slots, region, excluded genres) live in `meta.user_config`, not in code.
 
 ## Adding a new data source

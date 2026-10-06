@@ -1,7 +1,7 @@
 select
     hardcover_id,
     title,
-    author,
+    {{ latin_or_null('author') }} as author,
     rating,
     status as status_id,
     case status

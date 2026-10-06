@@ -250,7 +250,9 @@ models:
       Subject-tag reference list for books, sourced from OpenLibrary's
       subject field - the book-side counterpart to dim_genre (movie/TV
       genres stay separate because the two vocabularies don't overlap).
-      One row per distinct subject.
+      English tags only: French, Spanish, German and Polish catalogue tags
+      are dropped (macro is_non_english_subject). One row per distinct
+      subject.
     columns:
       - name: subject_id
         description: "Surrogate key for the subject."

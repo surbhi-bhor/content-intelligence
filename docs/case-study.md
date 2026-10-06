@@ -38,7 +38,7 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 ### dbt for transformations
 
 - **Choice:** dbt models instead of hand-written SQL scripts.
-- **Why:** transformations are version-controlled and documented, and they come with tests. The 79 tests (keys, foreign keys, allowed values, rating ranges) caught several issues along the way.
+- **Why:** transformations are version-controlled and documented, and they come with tests. The 80 tests (keys, foreign keys, allowed values, rating ranges) caught several issues along the way.
 
 ### Dagster for orchestration
 
@@ -104,6 +104,11 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 - **Problem:** book picks were driven by the taste profile's top subjects, which for a small library were only generic tags like "Fiction" and "New York Times bestseller". Only 30 arbitrary unread books were scored, and 3 books I had read never reached the reading history because Open Library had no match (one was credited to its translator).
 - **Fix:** generic tags are flagged in dbt, and each unread book is scored against the most similar book I rated highly and my average for its author, in one model shared by the picks and the app. Matching now ignores accents and falls back to a title and author search, and a library book with no match still gets a row.
 
+### Book authors appeared in Japanese and Chinese script
+
+- **Problem:** discovered books showed authors such as Haruki Murakami and Liu Cixin in Japanese and Chinese script, because Open Library often lists the original-script name first. Some subject tags were French or Spanish catalogue entries.
+- **Fix:** ingestion picks the English spelling from Open Library's name and alternative-name lists, and older rows are corrected on the next run. In dbt, non-English subject tags are dropped and any name still in another script is blanked. A dbt test now fails the run if non-English script reaches anything the app displays.
+
 ### An empty API response could have wiped the watch history
 
 - **Problem:** titles missing from the latest Simkl response were deleted. A successful but empty response would have deleted the entire history.
@@ -134,6 +139,6 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 
 - **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 11 marts tables, 7 meta tables.
 - **Data volume:** about 630 movie and TV titles in the catalogue, with roughly 120 watched titles and 29 books in the reading history.
-- **Testing:** 79 dbt tests and 51 unit tests, all passing, with lint, unit tests, and a dbt parse running in CI on every push.
+- **Testing:** 80 dbt tests and 57 unit tests, all passing, with lint, unit tests, and a dbt parse running in CI on every push.
 - **Orchestration:** 14 Dagster ops, 9 jobs, a weekly schedule (Fridays at noon IST), and a failure sensor with email alerts.
 - **Models:** `llama3.2:1b` for picks and `llama3.2:3b` for `/ask`.

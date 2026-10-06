@@ -149,3 +149,30 @@ def test_discovered_book_uses_its_english_edition_title():
     assert openlib_op.english_title({"title": "Krew elfów", "language": ["pol", "eng"]}) is None
     assert not openlib_op._is_english({"title": "Krew elfów", "language": ["pol", "eng"]})
 
+
+# ── English author names ─────────────────────────────────────────
+
+@pytest.mark.parametrize("names, alternatives, expected", [
+    (["川口俊和", "Toshikazu Kawaguchi"], [], "Toshikazu Kawaguchi"),          # Latin name listed second
+    (["村上春樹"], ["MURAKAMI Haruki", "Murakami Haruki Kenkyūkai",
+                 "Haruki Murakami", "Murakami Haruki", "HARUKI MURAKAMI"], "Haruki Murakami"),
+    (["刘慈欣"], ["Cixin Liu; Liu Cixin", "Liu Cixin", "Лю Цысинь", "Cixin Liu"], "Liu Cixin"),
+    (["Emily Brontë"], [], "Emily Brontë"),                                     # Latin accents are fine
+    (["한영롱"], ["한 영롱"], None),                                              # no English form at all
+])
+def test_author_name_is_shown_in_english(names, alternatives, expected):
+    assert openlib_op.english_author_name(names, alternatives) == expected
+
+
+def test_non_english_discovered_authors_are_replaced(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[("/works/OL1W", "村上春樹"), ("/works/OL2W", "Jenny Han")]])
+    looked_up = []
+
+    def fake_get(url, params, timeout):
+        looked_up.append(params["q"])
+        return FakeResponse([{"author_name": ["村上春樹"], "author_alternative_name": ["Haruki Murakami"]}])
+
+    monkeypatch.setattr(openlib_op.requests, "get", fake_get)
+    assert openlib_op.fix_non_english_authors(cursor, "run-1", log) == 1
+    assert looked_up == ["key:/works/OL1W"]                  # the English name was left alone
+    assert any(sql.startswith("UPDATE raw.raw_books SET author") for sql in cursor.executed)
