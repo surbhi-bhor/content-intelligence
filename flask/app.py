@@ -366,22 +366,52 @@ def find_book_replacement_pick(cur, exclude_ids):
     """Next best unread book from marts.book_candidate_scores, the same
     dbt model the weekly book picks rank from (recommendation_op.py), using
     the same order: both signals with a good score first, then predicted
-    score, subject overlap and popularity."""
-    cur.execute("""
+    score, subject overlap and popularity. Also the same variety rules as
+    select_book_picks: no second book by an author already on screen and at
+    most two "similar to" the same read, relaxed only when nothing else is
+    left. Without them a dismissal could add a second Freida McFadden."""
+    query = """
         SELECT s.content_id, s.title, s.primary_creator, s.vote_average, db.cover_url,
                s.similar_to_title, s.similar_to_rating, s.shared_subjects,
                s.author_avg_rating, s.author_read_count
         FROM marts.book_candidate_scores s
         JOIN marts.dim_book db ON db.content_id = s.content_id
         WHERE s.content_id NOT IN (SELECT content_id FROM meta.not_interested)
-          AND s.content_id != ALL(%s)
+          AND s.content_id != ALL(%(exclude)s)
+          {variety}
         ORDER BY (s.signal_count = 2 AND s.predicted_score >= 7) DESC,
                  s.predicted_score DESC NULLS LAST,
                  s.shared_subject_count DESC,
                  s.vote_count DESC NULLS LAST
         LIMIT 1;
-    """, (list(exclude_ids),))
-    row = cur.fetchone()
+    """
+    # Books still on screen = every current pick except the excluded ids
+    # (the dismissed one is in exclude_ids too).
+    variety = """
+          AND NOT EXISTS (
+              SELECT 1 FROM meta.daily_recommendations_books p
+              JOIN marts.book_candidate_scores ps ON ps.content_id = p.content_id
+              WHERE p.content_id != ALL(%(dismissed)s)
+                AND lower(trim(ps.primary_creator)) = lower(trim(s.primary_creator))
+          )
+          AND (s.similar_to_content_id IS NULL OR (
+              SELECT count(*) FROM meta.daily_recommendations_books p
+              JOIN marts.book_candidate_scores ps ON ps.content_id = p.content_id
+              WHERE p.content_id != ALL(%(dismissed)s)
+                AND ps.similar_to_content_id = s.similar_to_content_id
+          ) < 2)"""
+    exclude = list(exclude_ids)
+    # exclude_ids holds the remaining picks plus the dismissed id; only the
+    # dismissed one is gone from the screen.
+    cur.execute("SELECT content_id FROM meta.daily_recommendations_books;")
+    on_screen = {r[0] for r in cur.fetchall()}
+    dismissed = [cid for cid in exclude if cid not in on_screen] or [""]
+    row = None
+    for clause in (variety, ""):
+        cur.execute(query.format(variety=clause), {"exclude": exclude, "dismissed": dismissed})
+        row = cur.fetchone()
+        if row is not None:
+            break
     if row is None:
         return None
 
