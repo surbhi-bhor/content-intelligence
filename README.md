@@ -29,6 +29,7 @@ A self-hosted data platform that turns personal movie, TV, and book history into
 - [Project structure](#project-structure)
 - [Limitations](#limitations)
 - [Further reading](#further-reading)
+- [Data sources and attribution](#data-sources-and-attribution)
 - [License](#license)
 
 ## What it does
@@ -228,6 +229,19 @@ backups/             Daily database dumps (created at runtime, not committed)
 - [`docs/architecture.md`](docs/architecture.md): diagram, services, run order, and where data is stored.
 - [`docs/case-study.md`](docs/case-study.md): motivation, design choices, problems solved, and lessons learned.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): adding a data source or dbt model, running tests, and viewing dbt docs.
+
+## Data sources and attribution
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+| Source | Used for |
+| --- | --- |
+| [TMDB](https://www.themoviedb.org/) | Movie and TV catalogue, genres, posters, and streaming availability |
+| [Simkl](https://simkl.com/) | Personal watch history and ratings |
+| [Hardcover](https://hardcover.app/) | Personal reading history and ratings |
+| [Open Library](https://openlibrary.org/) | Book metadata, subjects, covers, and book discovery |
+
+Data from these services remains subject to each provider's own terms. The MIT license below covers this project's code only.
 
 ## License
 
