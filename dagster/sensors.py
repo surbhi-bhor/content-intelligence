@@ -89,6 +89,15 @@ def pipeline_failure_alert(context: RunFailureSensorContext):
     parts = [context.failure_event.message or "No run-level message captured"]
     for event in context.get_step_failure_events():
         step_error = getattr(event.event_specific_data, "error", None)
-        detail = step_error.message.strip() if step_error else event.message
-        parts.append(f"[{event.step_key}] {detail}")
+        if step_error is None:
+            parts.append(f"[{event.step_key}] {event.message}")
+            continue
+        # The top-level message is Dagster's generic "Error occurred while
+        # executing op"; the real exception (e.g. an SSL error) is in the
+        # cause chain, so include every level.
+        chain = []
+        while step_error is not None:
+            chain.append(step_error.message.strip().splitlines()[0])
+            step_error = step_error.cause
+        parts.append(f"[{event.step_key}] " + "\n  caused by: ".join(chain))
     record_and_notify(context.dagster_run.job_name, context.dagster_run.run_id, "\n\n".join(parts)[:4000])

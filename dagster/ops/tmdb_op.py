@@ -69,19 +69,38 @@ def get_conn():
 
 # ── Helpers ───────────────────────────────────────────────────
 
-def fetch_tmdb(endpoint: str, retries: int = 5) -> dict:
+# One shared session keeps the HTTPS connection open between calls. Some
+# networks drop TMDB connections during the TLS handshake (SSLEOFError on
+# roughly half of new connections), so reusing one connection avoids most
+# handshakes instead of paying one per request.
+_session = requests.Session()
+
+def fetch_tmdb(endpoint: str, retries: int = 6) -> dict:
     token = os.getenv("TMDB_API_KEY")
     base  = "https://api.themoviedb.org/3"
     headers = {"Authorization": f"Bearer {token}"}
     for attempt in range(retries):
         try:
-            r = requests.get(f"{base}{endpoint}", headers=headers, timeout=10)
+            r = _session.get(f"{base}{endpoint}", headers=headers, timeout=10)
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException:
             if attempt == retries - 1:
                 raise
             time.sleep(2 ** attempt)
+
+def fetch_discovery_endpoints(endpoints: list, log) -> list:
+    """Fetches each discovery endpoint, skipping any that still fail after
+    retries. One failed chart used to fail the whole run (and with it the
+    weekly picks); the caller's zero-row guard still fails the run if every
+    endpoint failed."""
+    pages = []
+    for ep in endpoints:
+        try:
+            pages.append(fetch_tmdb(ep))
+        except requests.exceptions.RequestException as e:
+            log.warning(f"TMDB endpoint {ep} failed after retries, skipping: {e}")
+    return pages
 
 def get_director(credits: dict) -> Optional[str]:
     for member in credits.get("crew", []):
@@ -163,8 +182,7 @@ def ingest_tmdb_movies(context):
     for lang in preferred_languages:
         endpoints.append(f"/discover/movie?with_original_language={lang}&sort_by=popularity.desc&page=1")
 
-    for ep in endpoints:
-        data = fetch_tmdb(ep)
+    for data in fetch_discovery_endpoints(endpoints, log):
         movies = data.get("results", [])
         total_fetched += len(movies)
 
@@ -347,8 +365,7 @@ def ingest_tmdb_shows(context):
     for lang in preferred_languages:
         endpoints.append(f"/discover/tv?with_original_language={lang}&sort_by=popularity.desc&page=1")
 
-    for ep in endpoints:
-        data = fetch_tmdb(ep)
+    for data in fetch_discovery_endpoints(endpoints, log):
         shows = data.get("results", [])
         total_fetched += len(shows)
 
