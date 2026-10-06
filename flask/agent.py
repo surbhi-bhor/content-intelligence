@@ -50,9 +50,11 @@ SCHEMA_RULES = """SQL RULES:
   return every matching row (id or title column only); the app counts rows
   in Python.
 - Ranking by AVERAGE requires a HAVING COUNT(*) floor so one-off ratings
-  can't win uncontested: >= 5 for genre/subject (same floor as
-  meta.taste_profile's own signal), >= 2 for creator (directors rarely
-  repeat 5+ times in one person's history — a 5 floor returns zero rows).
+  can't win uncontested: >= 5 for movie/TV genre, >= 2 for book subject and
+  for creator (same floors as meta.taste_profile; a few dozen books and
+  directors rarely reach 5).
+- Book subjects: always filter NOT dbs.is_generic. Generic tags ('Fiction',
+  'New York Times bestseller') are on most books and say nothing about them.
 - marts.dim_genre holds only movie/TV genres. Book subject tags live in
   marts.dim_book_subject / marts.bridge_content_book_subject (see the Books
   rule below).
@@ -230,8 +232,9 @@ FROM marts.fact_reading_history fw
 JOIN marts.bridge_content_book_subject bcbs ON bcbs.content_id = fw.content_id
 JOIN marts.dim_book_subject dbs ON dbs.subject_id = bcbs.subject_id
 WHERE fw.consumption_status = 'consumed'
+  AND NOT dbs.is_generic
 GROUP BY dbs.subject_name
-HAVING COUNT(*) >= 5
+HAVING COUNT(*) >= 2
 ORDER BY avg_rating DESC
 LIMIT 10;
 -- No content_type filter — fact_reading_history only ever holds books."""
@@ -711,10 +714,10 @@ _AVG_ALIAS = re.compile(r"\bAVG\s*\([^)]*\)\s+(?:AS\s+)?(\w+)", re.IGNORECASE)
 _HAVING_COUNT_FLOOR = re.compile(r"\bHAVING\s+COUNT\s*\(\s*\*\s*\)\s*>=\s*(\d+)\s*(?=ORDER\b)", re.IGNORECASE)
 
 def _repair_missing_avg_floor(sql: str) -> str:
-    """Bug: "highest rated book subject" let a 3-book subject win at 10/10.
-    The SCHEMA_RULES floor (>= 5 for genre/subject, >= 2 for creator) is in
-    the prompt, but the model either drops the HAVING or copies the creator
-    floor onto a subject query. Mechanical and deterministic, same as the
+    """Bug: "highest rated genre" let a one-off rating win at 10/10. The
+    SCHEMA_RULES floor (>= 5 for movie/TV genre, >= 2 for book subject and
+    creator, matching meta.taste_profile) is in the prompt, but the model
+    either drops the HAVING or copies the wrong floor. Mechanical and deterministic, same as the
     join repairs: for a single GROUP BY query ordered by an average, add the
     floor if there's no HAVING, or raise a plain `HAVING COUNT(*) >= k` that
     is below it. Any other HAVING shape is left alone."""
@@ -739,12 +742,38 @@ def _repair_missing_avg_floor(sql: str) -> str:
         return sql
     group_end = having_match.start() if having_match else order_match.start()
     group_clause = sql[group_match.end():group_end]
-    floor = 2 if "PRIMARY_CREATOR" in group_clause.upper() else 5
+    group_upper = group_clause.upper()
+    floor = 2 if "PRIMARY_CREATOR" in group_upper or "SUBJECT_NAME" in group_upper else 5
     if having_match:
         if int(having_match.group(1)) >= floor:
             return sql
         return sql[:having_match.start(1)] + str(floor) + sql[having_match.end(1):]
     return sql[:order_match.start()] + f"HAVING COUNT(*) >= {floor}\n" + sql[order_match.start():]
+
+_BOOK_SUBJECT_ALIAS = re.compile(r"\bmarts\.dim_book_subject\s+(?:AS\s+)?(\w+)", re.IGNORECASE)
+
+def _repair_missing_generic_subject_filter(sql: str) -> str:
+    """Generic Open Library tags ('Fiction', 'New York Times bestseller')
+    sit on most books, so a subject ranking without the is_generic filter
+    answers "Fiction" while the taste profile, which skips them, says
+    something specific. Adds NOT <alias>.is_generic to a single-WHERE (or
+    WHERE-less) query that groups by subject; anything else is left alone."""
+    alias_match = _BOOK_SUBJECT_ALIAS.search(sql)
+    if not alias_match or "IS_GENERIC" in sql.upper():
+        return sql
+    alias = alias_match.group(1)
+    if alias.upper() in ("ON", "WHERE", "JOIN", "GROUP", "ORDER", "LIMIT"):
+        return sql
+    upper = sql.upper()
+    if upper.count("GROUP BY") != 1 or "SUBJECT_NAME" not in upper[upper.index("GROUP BY"):]:
+        return sql
+    where_count = len(re.findall(r"\bWHERE\b", sql, re.IGNORECASE))
+    if where_count == 1:
+        return re.sub(r"\bWHERE\b", f"WHERE NOT {alias}.is_generic AND", sql, count=1, flags=re.IGNORECASE)
+    if where_count == 0:
+        group_match = re.search(r"\bGROUP\s+BY\b", sql, re.IGNORECASE)
+        return sql[:group_match.start()] + f"WHERE NOT {alias}.is_generic\n" + sql[group_match.start():]
+    return sql
 
 def _repair_missing_content_type_filter(sql: str, question: str) -> str:
     """Bug: 'movies on Apple TV+' - all 3 attempts dropped
@@ -793,6 +822,7 @@ def _try_execute(sql: str, question: str):
     sql = _repair_missing_genre_join(sql)
     sql = _repair_missing_platform_join(sql)
     sql = _repair_missing_avg_floor(sql)
+    sql = _repair_missing_generic_subject_filter(sql)
     sql = _repair_missing_content_type_filter(sql, question)
     sql = _repair_unrequested_language_filter(sql, question)
     if _has_missing_platform_join(sql):

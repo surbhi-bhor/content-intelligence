@@ -8,6 +8,8 @@ from typing import Optional
 from pydantic import BaseModel, ValidationError
 from dagster import op, get_dagster_logger
 
+from ops import NETWORK_RETRY
+
 # ── Pydantic models ──────────────────────────────────────────
 
 class MovieRaw(BaseModel):
@@ -161,7 +163,7 @@ def get_preferred_languages(cur) -> list:
 TMDB_MOVIES_MIN = 20
 TMDB_SHOWS_MIN = 20
 
-@op
+@op(retry_policy=NETWORK_RETRY)
 def ingest_tmdb_movies(context):
     log = get_dagster_logger()
     run_id = context.run_id
@@ -269,7 +271,7 @@ def ingest_tmdb_movies(context):
 # older than DETAILS_REFRESH_DAYS. Zero to enrich is a normal steady state -
 # not a signal the API is down, so a zero-guard would fire false alarms.
 
-@op
+@op(retry_policy=NETWORK_RETRY)
 def ingest_tmdb_details(context, movie_ids: list):
     log  = get_dagster_logger()
     run_id = context.run_id
@@ -344,7 +346,7 @@ def ingest_tmdb_details(context, movie_ids: list):
 
 # ── Op 3: discover TV shows ─────────────────────────────────────
 
-@op
+@op(retry_policy=NETWORK_RETRY)
 def ingest_tmdb_shows(context):
     log = get_dagster_logger()
     run_id = context.run_id
@@ -439,7 +441,7 @@ def ingest_tmdb_shows(context):
 # ── Op 4: enrich TV show details ────────────────────────────────
 # Same reasoning as ingest_tmdb_details above - no guard, zero-new is normal.
 
-@op
+@op(retry_policy=NETWORK_RETRY)
 def ingest_tmdb_tv_details(context, show_ids: list):
     log  = get_dagster_logger()
     run_id = context.run_id

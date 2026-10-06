@@ -31,6 +31,13 @@ def get_genre_signal(cur, domain, direction):
     id_col = "subject_id" if is_book else "genre_id"
     name_col = "subject_name" if is_book else "genre_name"
 
+    # Books: generic Open Library tags ("Fiction", "New York Times
+    # bestseller") sit on most books and crowded out every real subject, and
+    # a library of a few dozen books rarely has 5 per subject, so books use
+    # specific subjects only and a lower floor.
+    generic_filter = "AND NOT g.is_generic" if is_book else ""
+    min_count = 2 if is_book else 5
+
     order = "DESC" if direction == "top" else "ASC"
     rating_cmp = ">= 7" if direction == "top" else "<= 6"
     cur.execute(f"""
@@ -38,9 +45,9 @@ def get_genre_signal(cur, domain, direction):
         FROM {fact_table} fw
         JOIN {bridge_table} bcg ON bcg.content_id = fw.content_id
         JOIN {dim_table} g ON g.{id_col} = bcg.{id_col}
-        WHERE fw.has_rating
+        WHERE fw.has_rating {generic_filter}
         GROUP BY g.{name_col}
-        HAVING count(*) >= 5 AND avg(fw.rating) {rating_cmp}
+        HAVING count(*) >= {min_count} AND avg(fw.rating) {rating_cmp}
         ORDER BY avg(fw.rating) {order}
         LIMIT 10;
     """)

@@ -85,6 +85,13 @@ Both features follow the same principle: a small local model is useful, but not 
 - If the model fails, a deterministic fallback picks instead.
 - A final rules pass enforces the language mix and a minimum share of movies, which the small model does not do reliably on its own.
 
+**Book picks**
+
+- Open Library discovery searches the specific subjects and authors of books rated 4 stars or more.
+- Each unread book is scored in dbt (`marts.book_candidate_scores`) on two signals: the highly rated read it shares the most specific subjects with (at least two), and the average rating given to its author. Generic tags such as "Fiction" or "New York Times bestseller" are ignored.
+- Books backed by both signals rank first. Picks are limited to one per author and two per source book, and each reason names the read it is based on, for example "Like Before the Coffee Gets Cold, which you rated 10".
+- Already read books are excluded by id and by title, so another edition or translation of a read book is not recommended.
+
 **Ask**
 
 - Questions with no recognisable content keyword are rejected before any SQL is generated.
@@ -101,11 +108,12 @@ Both features follow the same principle: a small local model is useful, but not 
 - **Idempotent loads:** raw writes are upserts (`INSERT ... ON CONFLICT`), and every raw row records the Dagster run that wrote it (`pipeline_run_id`).
 - **Safe deletes:** if Simkl returns an empty or partly invalid response, deletion of missing titles is skipped, so history cannot be wiped by a bad response.
 - **Row-count checks:** an ingestion step fails when a source returns no rows, and warns when it returns fewer than expected.
-- **67 dbt tests:** unique keys, non-null columns, allowed values, foreign keys, composite keys, and rating ranges. A failing test stops the run before the taste profile and picks are rebuilt.
-- **Freshness checks:** dbt warns when raw data is more than 8 days old and errors after 15 days.
+- **79 dbt tests:** unique keys, non-null columns, allowed values, foreign keys, composite keys, and rating ranges. A failing test stops the run before the taste profile and picks are rebuilt.
+- **Retries:** ops that call an outside API retry twice (after 1, then 2 minutes), so one dropped connection doesn't cancel the week's run.
+- **Freshness checks:** the `/health` page turns yellow when picks are more than 8 days old. `dbt source freshness` (run by hand) warns at 8 days and errors at 15. The ratings tables only update their timestamp when a rating changes, so a quiet month shows as stale there even when runs succeed.
 - **Failure alerts:** every failed run is recorded in `meta.pipeline_alerts` and triggers an email. The `/health` page turns red until a later run succeeds.
 - **Backups:** a backup container runs `pg_dump` daily and keeps the last 14 copies.
-- **Unit tests and CI:** 31 pytest tests cover the core logic (pick validation, language allocation, the SQL safety checks and repairs, the delete guard, TMDB error handling). GitHub Actions runs lint, the tests, and a dbt parse on every push.
+- **Unit tests and CI:** 51 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching). GitHub Actions runs lint, the tests, and a dbt parse on every push.
 
 ## Dashboards (Metabase)
 
@@ -211,7 +219,7 @@ dagster/            Orchestration: 9 jobs, 14 ops, database setup (init_db.py)
   sensors.py         Run-failure alert (email + meta.pipeline_alerts)
 dbt/
   models/staging/    5 typed views over the raw tables
-  models/marts/      10 tables: dimensions, bridges, facts
+  models/marts/      11 tables: dimensions, bridges, facts, book scores
 flask/               Web app: picks page, /ask, /not-interested, /health, /usage
   templates/          base, index (picks + ask bar), health
 docs/                Architecture and case study
@@ -228,7 +236,8 @@ backups/             Daily database dumps (created at runtime, not committed)
 - **AI quality is checked by hand:** unit tests cover the logic around the models, but there is no evaluation set that scores `/ask` answers or recommendation quality.
 - **Slow `/ask` on a laptop:** answers take from about 40 seconds to a few minutes, because the models run on the CPU. This is the trade-off for running everything locally and for free.
 - **Thin regional catalogue:** each run discovers about 20 new titles per language from TMDB, so Hindi and Marathi candidates can run out after several dismissals, and replacements then fall back to English.
-- **Book subjects are raw Open Library tags:** they include list labels and synonyms (for example "New York Times bestseller" next to several spellings of Indian mythology), so book answers and picks are less precise than movie and TV genres.
+- **Book subjects are raw Open Library tags:** generic tags are filtered out, but synonyms remain (several spellings of Indian mythology), so book answers and picks are less precise than movie and TV genres.
+- **Books without an Open Library match** still appear in reading history and count as read, but have no subjects or cover, so they add only an author signal to book picks.
 
 ## Further reading
 

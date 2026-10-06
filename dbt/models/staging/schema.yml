@@ -84,10 +84,10 @@ models:
 
   - name: stg_books
     description: >
-      Book metadata from OpenLibrary. Covers both the personally rated books
-      (enrichment of existing Hardcover ratings) and discovered unread
-      candidates (new books surfaced from top-rated subjects/authors, with
-      no rating yet). One row per OpenLibrary key (ol_key).
+      Book metadata from OpenLibrary. Covers both the books in the Hardcover
+      library (enrichment of existing ratings) and discovered unread
+      candidates (found from the subjects and authors of highly rated books,
+      with no personal rating). One row per OpenLibrary key (ol_key).
     columns:
       - name: ol_key
         description: "OpenLibrary's own work key. Natural key for this model."

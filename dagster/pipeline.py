@@ -92,8 +92,8 @@ def taste_profile_job():
 
 @job
 def book_discovery_job():
-    # Requires an up-to-date meta.taste_profile (reads top_genres_read for
-    # which subjects to search) - run taste_profile_job first if it's stale.
+    # Seeds its searches from the subjects and authors of highly rated
+    # books in marts.fact_reading_history.
     # The dbt run at the end is required, not optional: it's what turns the
     # newly inserted raw.raw_books rows into real marts.dim_book
     # candidates the recommendation logic can actually select from.
@@ -123,8 +123,8 @@ def full_ingestion_job():
     test_result = run_dbt_tests_op(start=dbt_result)
     profile_result = build_taste_profile(start=test_result)
 
-    # Book discovery needs a fresh taste profile (reads top_genres_read to
-    # know which subjects to search) and its own dbt run afterward - the
+    # Book discovery reads the freshly built reading history (to know which
+    # subjects and authors to search) and needs its own dbt run afterward - the
     # newly discovered raw.raw_books rows aren't real marts.dim_book
     # candidates until dbt materializes them, so generate_recommendations
     # must wait for THIS dbt run, not the earlier one.

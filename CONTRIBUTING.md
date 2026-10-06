@@ -49,7 +49,7 @@
 **Unit tests and lint** run on the host, with no database or containers needed:
 
 ```bash
-python -m venv .venv
+py -3.12 -m venv .venv               # Python 3.12, same as Docker and CI; `python3.12 -m venv .venv` on macOS/Linux
 .venv/Scripts/activate              # Windows; use `source .venv/bin/activate` on macOS/Linux
 pip install -r requirements.txt -r requirements-dev.txt
 ruff check dagster flask tests      # lint (real defects only, see ruff.toml)

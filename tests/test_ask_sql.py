@@ -41,10 +41,20 @@ CREATOR = (
 )
 
 
+GENRE = (
+    "SELECT dg.genre_name, AVG(f.rating) AS avg_rating FROM marts.fact_watch_history f "
+    "JOIN marts.bridge_content_genre b ON b.content_id = f.content_id "
+    "JOIN marts.dim_genre dg ON dg.genre_id = b.genre_id "
+    "GROUP BY dg.genre_name {having}ORDER BY avg_rating DESC LIMIT 10"
+)
+
+
 @pytest.mark.parametrize("sql, expected", [
-    (SUBJECT.format(having=""), "HAVING COUNT(*) >= 5"),                       # missing floor added
-    (SUBJECT.format(having="HAVING COUNT(*) >= 2 "), "HAVING COUNT(*) >= 5"),  # creator floor copied: raised
-    (SUBJECT.format(having="HAVING COUNT(*) >= 8 "), "HAVING COUNT(*) >= 8"),  # stricter floor kept
+    (GENRE.format(having=""), "HAVING COUNT(*) >= 5"),                         # missing floor added
+    (GENRE.format(having="HAVING COUNT(*) >= 2 "), "HAVING COUNT(*) >= 5"),    # creator floor copied: raised
+    (GENRE.format(having="HAVING COUNT(*) >= 8 "), "HAVING COUNT(*) >= 8"),    # stricter floor kept
+    (SUBJECT.format(having=""), "HAVING COUNT(*) >= 2"),                       # book subjects use 2
+    (SUBJECT.format(having="HAVING COUNT(*) >= 1 "), "HAVING COUNT(*) >= 2"),  # too low: raised
     (CREATOR.format(having=""), "HAVING COUNT(*) >= 2"),                       # creators use 2
 ])
 def test_average_rankings_get_the_right_floor(sql, expected):
@@ -56,6 +66,17 @@ def test_average_rankings_get_the_right_floor(sql, expected):
 def test_floor_repair_leaves_other_queries_alone():
     count_query = "SELECT g, COUNT(*) n FROM t GROUP BY g ORDER BY n DESC"
     assert agent._repair_missing_avg_floor(count_query) == count_query
+
+
+def test_generic_book_subjects_are_filtered_out():
+    repaired = agent._repair_missing_generic_subject_filter(SUBJECT.format(having=""))
+    assert "WHERE NOT dbs.is_generic\nGROUP BY" in repaired
+
+    with_where = SUBJECT.format(having="").replace("GROUP BY", "WHERE fw.has_rating GROUP BY")
+    assert "WHERE NOT dbs.is_generic AND fw.has_rating" in agent._repair_missing_generic_subject_filter(with_where)
+
+    already = with_where.replace("fw.has_rating", "NOT dbs.is_generic")
+    assert agent._repair_missing_generic_subject_filter(already) == already
 
 
 # ── Repair: genre filter written without its joins ───────────────

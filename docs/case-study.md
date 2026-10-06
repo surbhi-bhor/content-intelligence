@@ -38,7 +38,7 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 ### dbt for transformations
 
 - **Choice:** dbt models instead of hand-written SQL scripts.
-- **Why:** transformations are version-controlled and documented, and they come with tests. The 67 tests (keys, foreign keys, allowed values, rating ranges) caught several issues along the way.
+- **Why:** transformations are version-controlled and documented, and they come with tests. The 79 tests (keys, foreign keys, allowed values, rating ranges) caught several issues along the way.
 
 ### Dagster for orchestration
 
@@ -97,7 +97,12 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 ### A small model copied its own example
 
 - **Problem:** `/ask` answered "highest-rated book subject" with a subject based on only 3 books. The prompt said subjects need at least 5 ratings, but the worked example in the prompt used the creator minimum of 2, and the model followed the example.
-- **Fix:** I corrected the example and added a code-level repair that applies the right minimum whenever a query ranks by an average. The answer now matches the taste profile.
+- **Fix:** I corrected the example and added a code-level repair that applies the right minimum whenever a query ranks by an average. The answer now matches the taste profile. (Book subjects later moved to a minimum of 2 with generic tags filtered out, in both places, once it was clear a few dozen books rarely reach 5 per subject.)
+
+### Book picks ignored what I had read
+
+- **Problem:** book picks were driven by the taste profile's top subjects, which for a small library were only generic tags like "Fiction" and "New York Times bestseller". Only 30 arbitrary unread books were scored, and 3 books I had read never reached the reading history because Open Library had no match (one was credited to its translator).
+- **Fix:** generic tags are flagged in dbt, and each unread book is scored against the most similar book I rated highly and my average for its author, in one model shared by the picks and the app. Matching now ignores accents and falls back to a title and author search, and a library book with no match still gets a row.
 
 ### An empty API response could have wiped the watch history
 
@@ -127,8 +132,8 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 
 ## Results
 
-- **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 10 marts tables, 7 meta tables.
-- **Data volume:** about 630 movie and TV titles in the catalogue, with roughly 120 watched titles and 25 read books in the history.
-- **Testing:** 67 dbt tests and 31 unit tests, all passing, with lint, unit tests, and a dbt parse running in CI on every push.
+- **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 11 marts tables, 7 meta tables.
+- **Data volume:** about 630 movie and TV titles in the catalogue, with roughly 120 watched titles and 29 books in the reading history.
+- **Testing:** 79 dbt tests and 51 unit tests, all passing, with lint, unit tests, and a dbt parse running in CI on every push.
 - **Orchestration:** 14 Dagster ops, 9 jobs, a weekly schedule (Fridays at noon IST), and a failure sensor with email alerts.
 - **Models:** `llama3.2:1b` for picks and `llama3.2:3b` for `/ask`.

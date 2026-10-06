@@ -37,7 +37,7 @@ How the pipeline is put together: the components, the order a run follows, and w
 │    stg_books · stg_book_ratings                            │
 │          │                                                 │
 │          ▼                                                 │
-│  marts (10 tables, indexed)                                │
+│  marts (11 tables, indexed)                                │
 │    dim_watchable ◄── movies + TV, conformed                │
 │    dim_book ◄── Hardcover + OpenLibrary, conformed         │
 │    dim_genre · dim_platform · dim_book_subject             │
@@ -45,8 +45,9 @@ How the pipeline is put together: the components, the order a run follows, and w
 │    bridge_content_book_subject                             │
 │    fact_watch_history · fact_reading_history               │
 │      (incremental on the source ingested_at)               │
+│    book_candidate_scores ◄── unread books vs. reads        │
 │                                                            │
-│  67 schema tests gate everything downstream                │
+│  79 schema tests gate everything downstream                │
 │  Source freshness: warn 8 days, error 15 days              │
 └──────────────────────────────┬─────────────────────────────┘
                                │
@@ -119,11 +120,13 @@ Steps run in dependency order, and independent branches run in parallel.
 
 1. **Ingest:** `ingest_tmdb_movies`, `ingest_tmdb_shows`, `ingest_simkl_ratings`, and `ingest_hardcover_books` run in parallel.
 2. **Merge ids:** TMDB discovery ids and Simkl watched ids are merged per content type (`merge_movie_ids`, `merge_show_ids`).
-3. **Enrich:** `ingest_tmdb_details` and `ingest_tmdb_tv_details` fetch details and streaming platforms for new titles and for titles older than 30 days; `enrich_book_metadata` matches library books to OpenLibrary.
+3. **Enrich:** `ingest_tmdb_details` and `ingest_tmdb_tv_details` fetch details and streaming platforms for new titles and for titles older than 30 days; `enrich_book_metadata` matches library books to OpenLibrary (by title, then by title and author).
 4. **Transform and test:** `run_dbt_transformations` (`dbt run`), then `run_dbt_tests_op` (`dbt test`). A test failure fails the run here.
 5. **Taste profile:** `build_taste_profile` appends a new row to `meta.taste_profile`.
-6. **Book discovery:** `discover_openlibrary_books` searches OpenLibrary by top subjects and authors, followed by a second `dbt run` and `dbt test` so new books become candidates.
-7. **Recommendations:** `generate_recommendations` replaces `meta.daily_recommendations_watch` (10 picks) and `meta.daily_recommendations_books` (5 picks).
+6. **Book discovery:** `discover_openlibrary_books` searches OpenLibrary by the specific subjects and authors of books rated 4 stars or more, followed by a second `dbt run` and `dbt test` so new books are scored in `book_candidate_scores`.
+7. **Recommendations:** `generate_recommendations` replaces `meta.daily_recommendations_books` (5 picks) first, then `meta.daily_recommendations_watch` (10 picks).
+
+Every op that calls an outside API (steps 1, 3 and 6) retries twice, after 1 and then 2 minutes, before failing the run.
 
 The other eight jobs run parts of this chain on demand, for example `simkl_ingestion_job` or `recommendation_job`.
 
@@ -135,7 +138,7 @@ All pipeline data lives in one Postgres database, `content_db`, split into four 
 | --- | --- | --- | --- |
 | `raw` | Source data exactly as each API sent it (7 tables) | Ingestion ops | No, rows are upserted |
 | `staging` | Cleaned, typed, deduplicated views (5 views) | dbt | Yes (views) |
-| `marts` | Dimensions, bridge tables, and facts for analysis (10 tables) | dbt | Yes, except the two fact tables, which update incrementally |
+| `marts` | Dimensions, bridge tables, facts, and book candidate scores (11 tables) | dbt | Yes, except the two fact tables, which update incrementally |
 | `meta` | App state and settings (7 tables) | Dagster ops, Flask, and the user | No, created once by `init_db.py` |
 
 **Why `meta` is separate from `marts`**
@@ -197,15 +200,17 @@ erDiagram
         timestamp source_ingested_at "incremental marker"
     }
     dim_book {
-        text content_id PK "book_ol_key"
+        text content_id PK "book_ol_key or book_hc_id"
         text title
         text primary_creator "author"
         int release_year
         int page_count
+        text metadata_source "openlibrary or hardcover"
     }
     dim_book_subject {
         bigint subject_id PK
         text subject_name
+        boolean is_generic "format or marketing tag"
     }
     bridge_content_book_subject {
         text content_id FK

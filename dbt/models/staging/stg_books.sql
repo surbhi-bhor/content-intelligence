@@ -8,5 +8,6 @@ select
     ratings_average,
     ratings_count,
     page_count,
-    cover_id
+    cover_id,
+    ingested_at
 from {{ source('raw', 'raw_books') }}

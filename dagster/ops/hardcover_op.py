@@ -6,6 +6,8 @@ from typing import Optional
 from pydantic import BaseModel, ValidationError
 from dagster import op, get_dagster_logger
 
+from ops import NETWORK_RETRY
+
 # ── Pydantic model ───────────────────────────────────────────
 
 class BookRating(BaseModel):
@@ -37,6 +39,18 @@ def get_isbns(book: dict) -> tuple[Optional[str], Optional[str]]:
     isbn_10 = next((e["isbn_10"] for e in editions if e.get("isbn_10")), None)
     return isbn_13, isbn_10
 
+def get_author(book: dict) -> Optional[str]:
+    """The first contributor credited as the author. contributions also
+    lists translators, illustrators and narrators, sometimes first: taking
+    contributions[0] credited 'What You Are Looking for Is in the Library'
+    to its translator. Hardcover leaves the role empty on some author
+    credits, so an empty role counts as the author too."""
+    contributions = book.get("contributions") or []
+    for c in contributions:
+        if (c.get("contribution") or "Author") == "Author" and c.get("author"):
+            return c["author"]["name"]
+    return contributions[0]["author"]["name"] if contributions else None
+
 def fetch_hardcover(query: str) -> dict:
     token = os.getenv("HARDCOVER_API_TOKEN")
     url = "https://api.hardcover.app/v1/graphql"
@@ -67,6 +81,7 @@ HARDCOVER_QUERY = """
       book {
         title
         contributions {
+          contribution
           author {
             name
           }
@@ -83,7 +98,7 @@ HARDCOVER_QUERY = """
 
 HARDCOVER_BOOKS_MIN = 1
 
-@op
+@op(retry_policy=NETWORK_RETRY)
 def ingest_hardcover_books(context):
     log = get_dagster_logger()
     run_id = context.run_id
@@ -105,8 +120,7 @@ def ingest_hardcover_books(context):
     for b in user_books:
         try:
             book = b.get("book", {})
-            contributions = book.get("contributions", [])
-            author = contributions[0]["author"]["name"] if contributions else None
+            author = get_author(book)
             isbn_13, isbn_10 = get_isbns(book)
 
             reads = b.get("user_book_reads", [])
@@ -133,13 +147,17 @@ def ingest_hardcover_books(context):
                 hardcover_id, title, author, isbn_13, isbn_10, rating, status, finished_at, pipeline_run_id
             ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (hardcover_id) DO UPDATE SET
+                title       = EXCLUDED.title,
+                author      = EXCLUDED.author,
                 isbn_13     = EXCLUDED.isbn_13,
                 isbn_10     = EXCLUDED.isbn_10,
                 rating      = EXCLUDED.rating,
                 status      = EXCLUDED.status,
                 finished_at = EXCLUDED.finished_at,
                 ingested_at = CASE
-                    WHEN raw_book_ratings.isbn_13     IS DISTINCT FROM EXCLUDED.isbn_13
+                    WHEN raw_book_ratings.title       IS DISTINCT FROM EXCLUDED.title
+                      OR raw_book_ratings.author      IS DISTINCT FROM EXCLUDED.author
+                      OR raw_book_ratings.isbn_13     IS DISTINCT FROM EXCLUDED.isbn_13
                       OR raw_book_ratings.isbn_10     IS DISTINCT FROM EXCLUDED.isbn_10
                       OR raw_book_ratings.rating      IS DISTINCT FROM EXCLUDED.rating
                       OR raw_book_ratings.status      IS DISTINCT FROM EXCLUDED.status

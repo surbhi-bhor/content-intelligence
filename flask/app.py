@@ -54,7 +54,7 @@ def watch_url(content_id: str):
 def book_url(content_id: str):
     """content_id for an OpenLibrary-matched book is 'book_/works/OL...W' -
     that's a real OpenLibrary work path already, no extra lookup needed.
-    Hardcover-only books (no OL match, e.g. 'book_manual_17256130') have no
+    Hardcover-only books (no OL match, e.g. 'book_hc_17256122') have no
     known-correct URL scheme here, so they get no link rather than a guess."""
     if content_id and content_id.startswith("book_/works/"):
         return f"https://openlibrary.org{content_id[len('book_'):]}"
@@ -359,53 +359,46 @@ def find_replacement_pick(cur, exclude_ids, target_language, target_content_type
         "watch_url": watch_url(content_id),
     }
 
-def find_book_replacement_pick(cur, exclude_ids):
-    """Books have no language and discovered candidates have no rating
-    data, so this can't reuse find_replacement_pick's tiered
-    language/type search at all - same reasoning as
-    recommendation_op.py's select_book_picks. Subject match + author match
-    against top_genres_read/top_creators_read is the available signal."""
-    cur.execute("SELECT top_genres_read, top_creators_read FROM meta.taste_profile ORDER BY generated_at DESC LIMIT 1;")
-    row = cur.fetchone()
-    subject_names = [g["name"] for g in (row[0] or [])] if row else []
-    creator_names = [c["name"] for c in (row[1] or [])] if row else []
+def _fmt_rating(value) -> str:
+    return f"{float(value):g}"
 
+def find_book_replacement_pick(cur, exclude_ids):
+    """Next best unread book from marts.book_candidate_scores, the same
+    dbt model the weekly book picks rank from (recommendation_op.py), using
+    the same order: both signals with a good score first, then predicted
+    score, subject overlap and popularity."""
     cur.execute("""
-        SELECT dc.content_id, dc.title, dc.primary_creator, dc.vote_average, dc.cover_url,
-               dc.page_count,
-               array_agg(DISTINCT dbs.subject_name) FILTER (WHERE dbs.subject_name IS NOT NULL) AS subjects
-        FROM marts.dim_book dc
-        LEFT JOIN marts.bridge_content_book_subject bcbs ON bcbs.content_id = dc.content_id
-        LEFT JOIN marts.dim_book_subject dbs ON dbs.subject_id = bcbs.subject_id
-        WHERE dc.content_id NOT IN (SELECT content_id FROM marts.fact_reading_history)
-          AND dc.content_id NOT IN (SELECT content_id FROM meta.not_interested)
-          AND dc.content_id != ALL(%s)
-        GROUP BY dc.content_id, dc.title, dc.primary_creator, dc.vote_average, dc.cover_url, dc.page_count;
+        SELECT s.content_id, s.title, s.primary_creator, s.vote_average, db.cover_url,
+               s.similar_to_title, s.similar_to_rating, s.shared_subjects,
+               s.author_avg_rating, s.author_read_count
+        FROM marts.book_candidate_scores s
+        JOIN marts.dim_book db ON db.content_id = s.content_id
+        WHERE s.content_id NOT IN (SELECT content_id FROM meta.not_interested)
+          AND s.content_id != ALL(%s)
+        ORDER BY (s.signal_count = 2 AND s.predicted_score >= 7) DESC,
+                 s.predicted_score DESC NULLS LAST,
+                 s.shared_subject_count DESC,
+                 s.vote_count DESC NULLS LAST
+        LIMIT 1;
     """, (list(exclude_ids),))
-    rows = cur.fetchall()
-    if not rows:
+    row = cur.fetchone()
+    if row is None:
         return None
 
-    def score(row):
-        subjects = row[6] or []
-        match_count = sum(1 for s in subjects if s in subject_names)
-        creator_is_top = bool(row[2]) and row[2] in creator_names
-        return (match_count + (2 if creator_is_top else 0), row[3] if row[3] is not None else 0)
-
-    content_id, title, creator, vote_average, cover_url, page_count, subjects = max(rows, key=score)
-    subjects = subjects or []
-    matched = next((s for s in subjects if s in subject_names), None)
-    creator_is_top = bool(creator) and creator in creator_names
-    if creator_is_top and matched:
-        reason = f"By {creator} — top-rated author, in {matched}."
-    elif creator_is_top:
-        reason = f"By {creator}, top-rated author."
-    elif matched:
-        reason = f"Matches favorite subject: {matched}."
+    (content_id, title, creator, vote_average, cover_url, similar_title,
+     similar_rating, shared_subjects, author_avg, author_read_count) = row
+    shared = ", ".join((shared_subjects or [])[:2])
+    if similar_title and author_avg is not None:
+        reason = f"By {creator}, whose books you rate {_fmt_rating(author_avg)} avg, and like {similar_title} ({shared})."
+    elif similar_title:
+        reason = f"Like {similar_title}, which you rated {_fmt_rating(similar_rating)}: {shared}."
+    elif author_avg is not None:
+        books = "book" if author_read_count == 1 else "books"
+        reason = f"By {creator}: you rated {author_read_count} of their {books} {_fmt_rating(author_avg)} avg."
     elif creator:
-        reason = f"By {creator} — worth discovering."
+        reason = f"By {creator}, a well-read title worth discovering."
     else:
-        reason = "A new title worth discovering."
+        reason = "A well-read title worth discovering."
 
     return {
         "content_id": content_id,

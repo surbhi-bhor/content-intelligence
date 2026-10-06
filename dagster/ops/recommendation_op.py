@@ -197,7 +197,7 @@ def build_data_grounded_reason(candidate, genre_avg, creator_avg, angle="genre")
             return f"{matched_genre}, your top-rated genre at {genre_avg[matched_genre]} avg."
 
     if angle == "hidden_gem":
-        # candidate pool already filters vote_average >= 7, so "high quality" is a real claim, not a guess
+        # candidate pool already filters vote_average (>= 7, or >= 5.5 for hi/mr), so "high quality" is relative to that bar
         if matched_genre:
             return f"A hidden gem in {matched_genre}: high quality, worth discovering."
         if creator_is_top:
@@ -418,7 +418,7 @@ def select_picks_deterministic(candidates, genre_avg, creator_avg, count=DAILY_P
         take([c for c in pool() if c[4] in ("hi", "mr")], "regional")
 
         # 4. hidden gem: least mainstream (lowest popularity) among remaining -
-        # candidates are already vote_average >= 7 filtered, so "high quality" holds
+        # candidates already pass the vote_average bar (>= 7, or >= 5.5 for hi/mr)
         gem_pool = pool()
         if gem_pool:
             movie_count = sum(1 for p, _ in picks if p[2] == "movie")
@@ -600,63 +600,100 @@ def rebalance_type_within_language(picks, candidates, slots, genre_avg, creator_
     return result
 
 BOOK_PICKS_COUNT = 5
+MAX_BOOK_PICKS_PER_AUTHOR = 1
+MAX_BOOK_PICKS_PER_SIMILAR_BOOK = 2
+GOOD_PREDICTED_SCORE = 7
 
-def get_book_candidates(cur, subject_names, creator_names, limit=30) -> list:
-    """Books have no language field and discovered candidates have no
-    rating data (OpenLibrary's subject endpoint doesn't return per-work
-    ratings) - so this can't reuse get_candidates' vote_count/vote_average/
-    language filtering at all. Subject match + author match against the
-    reader's own top-rated real subjects/creators is the signal available
-    for discovered books; already-enriched books (read via Hardcover, with
-    real ratings_average) still get to use that rating when present."""
+def get_book_candidates(cur) -> list:
+    """Every unread, not-dismissed book with its scores from
+    marts.book_candidate_scores, where dbt computes the two signals (the
+    most similar highly rated read, and the reader's average for the
+    author). Flask's replacement for a dismissed book reads the same model,
+    so both rank books the same way."""
     cur.execute("""
-        SELECT
-            dc.content_id, dc.title, dc.primary_creator, dc.vote_average,
-            dc.vote_count,
-            array_agg(DISTINCT dbs.subject_name) FILTER (WHERE dbs.subject_name IS NOT NULL) AS subjects
-        FROM marts.dim_book dc
-        LEFT JOIN marts.bridge_content_book_subject bcbs ON bcbs.content_id = dc.content_id
-        LEFT JOIN marts.dim_book_subject dbs ON dbs.subject_id = bcbs.subject_id
-        WHERE dc.content_id NOT IN (SELECT content_id FROM marts.fact_reading_history)
-          AND dc.content_id NOT IN (SELECT content_id FROM meta.not_interested)
-        GROUP BY dc.content_id, dc.title, dc.primary_creator, dc.vote_average, dc.vote_count
-        LIMIT %s;
-    """, (limit,))
-    candidates = []
-    for cid, title, creator, vote_average, vote_count, subjects in cur.fetchall():
-        subjects = subjects or []
-        match_count = sum(1 for s in subjects if s in subject_names)
-        creator_is_top = bool(creator) and creator in creator_names
-        candidates.append((cid, title, creator, vote_average, vote_count, subjects, match_count, creator_is_top))
-    return candidates
+        SELECT content_id, title, primary_creator, predicted_score, signal_count,
+               similar_to_content_id, similar_to_title, similar_to_rating,
+               shared_subject_count, shared_subjects, author_avg_rating,
+               author_read_count, vote_count
+        FROM marts.book_candidate_scores
+        WHERE content_id NOT IN (SELECT content_id FROM meta.not_interested);
+    """)
+    columns = [d[0] for d in cur.description]
+    return [dict(zip(columns, row)) for row in cur.fetchall()]
 
-def select_book_picks(cur, subject_names, creator_names, count=BOOK_PICKS_COUNT) -> list:
-    """Author match ranks alongside subject match - same "creator match"
-    signal movies/TV already use, now that discovery actually surfaces
-    books by top-rated authors (see openlib_op.py). Real rating is the
-    tiebreak, only when present - an unrated discovered book is never
-    penalized just for lacking OpenLibrary rating data it was never going
-    to have."""
-    candidates = get_book_candidates(cur, subject_names, creator_names)
-    ranked = sorted(
-        candidates,
-        key=lambda c: (c[6] + (2 if c[7] else 0), c[3] if c[3] is not None else 0),
-        reverse=True,
-    )
-    return ranked[:count]
+def book_rank_key(candidate) -> tuple:
+    """Higher sorts first. A book backed by both signals with a good score
+    leads, then the predicted score, then how strong the subject overlap is,
+    then Open Library popularity as the last tiebreak. A book with no signal
+    keeps a place at the back, ordered by popularity, so a thin history
+    still yields picks."""
+    score = float(candidate["predicted_score"]) if candidate["predicted_score"] is not None else 0.0
+    strong = candidate["signal_count"] == 2 and score >= GOOD_PREDICTED_SCORE
+    return (strong, score, candidate["shared_subject_count"] or 0, candidate["vote_count"] or 0)
 
-def build_book_reason(candidate, subject_names) -> str:
-    _, title, creator, vote_average, vote_count, subjects, match_count, creator_is_top = candidate
-    matched = next((s for s in subjects if s in subject_names), None)
-    if creator_is_top and matched:
-        return f"By {creator} — your top-rated author, in {matched}."
-    if creator_is_top:
-        return f"By {creator}, your top-rated author."
-    if matched:
-        return f"Matches your favorite subject: {matched}."
+def select_book_picks(candidates, count=BOOK_PICKS_COUNT) -> list:
+    """Best-ranked books, with variety: one book per author and at most two
+    "similar to" the same read book. Without the caps a single loved book
+    with many subjects (or a favourite author) fills every slot. The caps
+    relax only when the pool is too thin to fill `count` otherwise."""
+    ranked = sorted(candidates, key=book_rank_key, reverse=True)
+    picks = []
+    for enforce_caps in (True, False):
+        for c in ranked:
+            if len(picks) >= count:
+                return picks
+            if c in picks:
+                continue
+            if enforce_caps:
+                author = (c["primary_creator"] or "").strip().lower()
+                if author and sum(1 for p in picks if (p["primary_creator"] or "").strip().lower() == author) >= MAX_BOOK_PICKS_PER_AUTHOR:
+                    continue
+                similar = c["similar_to_content_id"]
+                if similar and sum(1 for p in picks if p["similar_to_content_id"] == similar) >= MAX_BOOK_PICKS_PER_SIMILAR_BOOK:
+                    continue
+            picks.append(c)
+    return picks
+
+def _fmt_rating(value) -> str:
+    return f"{float(value):g}"
+
+def build_book_reason(candidate) -> str:
+    """Names the actual read the pick is based on, the same way movie
+    reasons name the matched genre or creator."""
+    similar = candidate["similar_to_title"]
+    shared = ", ".join((candidate["shared_subjects"] or [])[:2])
+    creator = candidate["primary_creator"]
+    author_avg = candidate["author_avg_rating"]
+    if similar and author_avg is not None:
+        return (f"By {creator}, whose books you rate {_fmt_rating(author_avg)} avg, "
+                f"and like {similar} ({shared}).")
+    if similar:
+        return f"Like {similar}, which you rated {_fmt_rating(candidate['similar_to_rating'])}: {shared}."
+    if author_avg is not None:
+        books = "book" if candidate["author_read_count"] == 1 else "books"
+        return f"By {creator}: you rated {candidate['author_read_count']} of their {books} {_fmt_rating(author_avg)} avg."
     if creator:
-        return f"By {creator} — worth discovering."
-    return "A new title worth discovering."
+        return f"By {creator}, a well-read title worth discovering."
+    return "A well-read title worth discovering."
+
+def write_book_picks(cur, log) -> int:
+    """Replaces meta.daily_recommendations_books. Books are a separate
+    problem from movies (no language, own candidate model, own table), and
+    they run first and on their own, so a movie-side early exit (no taste
+    profile, no movie candidates) can't leave last week's book picks in
+    place."""
+    book_picks = select_book_picks(get_book_candidates(cur))
+    cur.execute("DELETE FROM meta.daily_recommendations_books;")
+    for rank, candidate in enumerate(book_picks, start=1):
+        cur.execute("""
+            INSERT INTO meta.daily_recommendations_books (content_id, title, rank, reason)
+            VALUES (%s,%s,%s,%s);
+        """, (candidate["content_id"], candidate["title"], rank, build_book_reason(candidate)))
+    if book_picks:
+        log.info(f"Selected {len(book_picks)} book pick(s) from marts.book_candidate_scores")
+    else:
+        log.info("No book candidates available; run book_discovery_job to find unread books")
+    return len(book_picks)
 
 # ── Op: generate recommendations ────────────────────────────────
 
@@ -665,6 +702,9 @@ def generate_recommendations(context, start=None):
     log = get_dagster_logger()
     conn = get_conn()
     cur = conn.cursor()
+
+    write_book_picks(cur, log)
+    conn.commit()
 
     summary_text, genre_names, creator_names, genre_avg, creator_avg = get_latest_watch_profile(cur)
     if summary_text is None:
@@ -684,7 +724,7 @@ def generate_recommendations(context, start=None):
     id_to_candidate = {c[0]: c for c in candidates}
 
     # Python does all the data work (candidates, scoring, shortlist) - a local
-    # Ollama model only judges variety and picks which 5 to feature, from a
+    # Ollama model only judges variety and picks which 10 to feature, from a
     # shortlist that's already 100% real. It never writes the displayed
     # reason (see validate_model_picks) - every id it returns is checked
     # against the real shortlist before anything reaches the database. Falls
@@ -759,29 +799,6 @@ def generate_recommendations(context, start=None):
             INSERT INTO meta.daily_recommendations_watch (content_id, title, content_type, rank, reason, predicted_score)
             VALUES (%s,%s,%s,%s,%s,%s);
         """, (content_id, title, content_type, rank, reason, predicted_score))
-
-    # Books are a structurally separate recommendation problem - no
-    # language, mostly no rating data on discovered candidates - so they
-    # get their own selection function and their own table entirely
-    # (meta.daily_recommendations_books) rather than sharing a rank range
-    # with movie/TV picks.
-    cur.execute("SELECT top_genres_read, top_creators_read FROM meta.taste_profile ORDER BY generated_at DESC LIMIT 1;")
-    row = cur.fetchone()
-    book_subject_names = [g["name"] for g in (row[0] or [])] if row else []
-    book_creator_names = [c["name"] for c in (row[1] or [])] if row else []
-    book_picks = select_book_picks(cur, book_subject_names, book_creator_names)
-    cur.execute("DELETE FROM meta.daily_recommendations_books;")
-    for rank, candidate in enumerate(book_picks, start=1):
-        content_id, title, creator, vote_average, vote_count, subjects, match_count, creator_is_top = candidate
-        reason = build_book_reason(candidate, book_subject_names)
-        cur.execute("""
-            INSERT INTO meta.daily_recommendations_books (content_id, title, rank, reason)
-            VALUES (%s,%s,%s,%s);
-        """, (content_id, title, rank, reason))
-    if book_picks:
-        log.info(f"Selected {len(book_picks)} book pick(s) via OpenLibrary-sourced candidates")
-    else:
-        log.info("No book candidates available; run book_discovery_job to find unread books")
 
     conn.commit()
     cur.close()

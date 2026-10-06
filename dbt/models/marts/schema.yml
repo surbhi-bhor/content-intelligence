@@ -37,16 +37,24 @@ models:
 
   - name: dim_book
     description: >
-      Conformed dimension for all books - both rated books from Hardcover
-      and discovered unread candidates from OpenLibrary, unioned by
-      construction (OpenLibrary enrichment already merges both sources in
-      stg_books). One row per book (content_id = 'book_<ol_key>').
+      Conformed dimension for all books: books in the Hardcover library and
+      discovered unread candidates from OpenLibrary. A library book with no
+      OpenLibrary match still gets a row (content_id 'book_hc_<hardcover_id>',
+      no subjects or cover) so every read reaches fact_reading_history.
+      One row per book.
     columns:
       - name: content_id
-        description: "Synthetic conformed key ('book_<ol_key>')."
+        description: "Synthetic conformed key: 'book_<ol_key>', or 'book_hc_<hardcover_id>' for a library book with no OpenLibrary match."
         tests:
           - unique
           - not_null
+      - name: metadata_source
+        description: "Where the book's metadata comes from: 'openlibrary', or 'hardcover' when no OpenLibrary match exists yet."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['openlibrary', 'hardcover']
       - name: title
         description: "Book title."
         tests:
@@ -54,7 +62,9 @@ models:
       - name: primary_creator
         description: "Author - named primary_creator (not 'author') to line up with dim_watchable's column for shared creator-match logic in recommendations."
       - name: hardcover_id
-        description: "Present for rated books (joined from the personal Hardcover library); null for discovered-but-unrated candidates."
+        description: "Present for books in the personal Hardcover library; null for discovered candidates. At most one row per library book."
+        tests:
+          - unique
 
   - name: fact_watch_history
     description: >
@@ -252,6 +262,10 @@ models:
         tests:
           - unique
           - not_null
+      - name: is_generic
+        description: "True for format, audience, marketing and library tags ('Fiction', 'New York Times bestseller', 'Large type books') that say nothing about what a book is like. Taste signals and book similarity skip these."
+        tests:
+          - not_null
 
   - name: bridge_content_book_subject
     description: >
@@ -279,3 +293,55 @@ models:
               arguments:
                 to: ref('dim_book_subject')
                 field: subject_id
+
+  - name: book_candidate_scores
+    description: >
+      Every unread book scored against the reader's history, the book
+      equivalent of the genre and creator signals behind movie picks. One row
+      per unread book. Read by the weekly book picks and by the Flask
+      replacement for a dismissed book, so both rank the same way.
+    columns:
+      - name: content_id
+        description: "FK to dim_book.content_id."
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_book')
+                field: content_id
+      - name: similar_to_content_id
+        description: "The highly rated read (8+ out of 10) sharing the most specific subjects with this book, when at least two are shared."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('fact_reading_history')
+                field: content_id
+      - name: similar_to_title
+        description: "Title of that read book."
+      - name: similar_to_rating
+        description: "The reader's rating of that book (1-10)."
+      - name: shared_subject_count
+        description: "Number of specific (non-generic) subjects shared with that book; 0 when no similar read exists."
+        tests:
+          - not_null
+      - name: shared_subjects
+        description: "The shared subject names."
+      - name: author_avg_rating
+        description: "The reader's average rating of this author's books, when they have rated any."
+      - name: signal_count
+        description: "How many of the two signals (similar book, author) exist: 0, 1 or 2."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2]
+      - name: predicted_score
+        description: "Mean of similar_to_rating and author_avg_rating, whichever exist. Null when neither does."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 10
+              config:
+                where: "predicted_score is not null"

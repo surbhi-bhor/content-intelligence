@@ -6,6 +6,8 @@ from typing import Optional
 from pydantic import BaseModel, ValidationError
 from dagster import op, Out, Output, get_dagster_logger
 
+from ops import NETWORK_RETRY
+
 # ── Pydantic model ───────────────────────────────────────────
 
 class RatingRaw(BaseModel):
@@ -44,7 +46,7 @@ def fetch_simkl_ratings() -> dict:
 
 SIMKL_RATINGS_MIN = 1
 
-@op(out={"movie_ids": Out(), "show_ids": Out()})
+@op(out={"movie_ids": Out(), "show_ids": Out()}, retry_policy=NETWORK_RETRY)
 def ingest_simkl_ratings(context):
     log = get_dagster_logger()
     run_id = context.run_id

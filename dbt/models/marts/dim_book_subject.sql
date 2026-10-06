@@ -16,5 +16,27 @@ cleaned as (
 
 select
     row_number() over (order by subject_name) as subject_id,
-    subject_name
+    subject_name,
+    -- Open Library subjects mix real topics ("Indic Mythology", "Time
+    -- travel") with format, audience, marketing and library tags ("Fiction",
+    -- "New York Times bestseller", "Large type books"). The second kind is on
+    -- most books, so it says nothing about what a book is like. Taste signals
+    -- and book similarity ignore these.
+    (
+        lower(subject_name) in (
+            'fiction', 'fiction, general', 'general', 'literature', 'novel', 'novels',
+            'juvenile fiction', 'juvenile literature', 'children''s fiction',
+            'new york times bestseller', 'new york times reviewed', 'bestsellers',
+            'romans, nouvelles', 'romans, nouvelles, etc.', 'roman', 'romans',
+            'american literature', 'english literature', 'english fiction',
+            'american fiction', 'fiction in english', 'literary', 'literary fiction',
+            'fiction, literary', 'adult', 'contemporary', 'classic literature',
+            'translations into english',
+            'british and irish fiction (fictional works by one author)',
+            'american fiction (fictional works by one author)',
+            'english fiction (fictional works by one author)'
+        )
+        or lower(subject_name) ~ '^(collection:|nyt:|reading level|award|accessible book|protected daisy|in library|lending library|large type|popular print|open library)'
+    ) as is_generic
+
 from cleaned
