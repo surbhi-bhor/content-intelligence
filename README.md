@@ -12,6 +12,7 @@ A self-hosted data platform that turns personal movie, TV, and book history into
 ![Metabase](https://img.shields.io/badge/Metabase-BI-509EE3)
 ![LangChain](https://img.shields.io/badge/LangChain-%2B%20Ollama-1C3C3C)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
+[![CI](https://github.com/surbhi-bhor/content-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/surbhi-bhor/content-intelligence/actions/workflows/ci.yml)
 
 ![Picks page with movie, TV, and book recommendations, a taste profile sidebar, and the ask bar](docs/images/picks-page.png)
 
@@ -104,6 +105,7 @@ Both features follow the same principle: a small local model is useful, but not 
 - **Freshness checks:** dbt warns when raw data is more than 8 days old and errors after 15 days.
 - **Failure alerts:** every failed run is recorded in `meta.pipeline_alerts` and triggers an email. The `/health` page turns red until a later run succeeds.
 - **Backups:** a backup container runs `pg_dump` daily and keeps the last 14 copies.
+- **Unit tests and CI:** 31 pytest tests cover the core logic (pick validation, language allocation, the SQL safety checks and repairs, the delete guard, TMDB error handling). GitHub Actions runs lint, the tests, and a dbt parse on every push.
 
 ## Dashboards (Metabase)
 
@@ -196,7 +198,8 @@ Title details are re-fetched every 30 days, so a region change reaches existing 
   docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < backups/postgres/<file>.dump
   ```
 
-- **Tests:** `docker compose exec -w /opt/dbt dagster-code dbt build` rebuilds every model and runs all tests.
+- **Tests:** `docker compose exec -w /opt/dbt dagster-code dbt build` rebuilds every model and runs all dbt tests. Unit tests run with `pytest` (see [`CONTRIBUTING.md`](CONTRIBUTING.md#running-tests)).
+- **Local access only:** every service port is bound to `127.0.0.1`, so the app, Dagster, Metabase, Postgres, and Ollama are reachable from this machine but not from other devices on the network.
 
 ## Project structure
 
@@ -211,18 +214,20 @@ dbt/
 flask/               Web app: picks page, /ask, /not-interested, /health, /usage
   templates/          base, index (picks + ask bar), health
 docs/                Architecture and case study
+tests/               Unit tests (pytest)
+.github/workflows/   CI: lint, unit tests, dbt parse
 docker-compose.yml   All 8 services
 backups/             Daily database dumps (created at runtime, not committed)
 ```
 
 ## Limitations
 
-- **Single machine:** all data lives in one Postgres instance, and backups are stored on the same machine.
-- **No CI:** dbt tests run inside every pipeline run, but nothing runs automatically on a push.
-- **No Python tests or AI evaluation set:** the dbt layer is tested, while `/ask` and recommendation quality are checked by hand.
-- **No login:** Flask, Dagster, and Metabase are open on their ports. This is fine on a personal machine, but not for shared access.
-- **Slow `/ask` on a laptop:** answers take from about 40 seconds to a few minutes on a CPU.
-- **TMDB connection drops:** some networks intermittently drop TMDB connections. Affected titles keep their previous data and are retried on the next run.
+- **Built for one person on one machine:** services are reachable only from this machine. Flask and Dagster have no login of their own, so the setup is not meant for shared or hosted use. Metabase has its own login.
+- **Backups stay on the same machine:** daily dumps protect against a damaged database, not against losing the machine. The history can be re-pulled from Simkl and Hardcover if needed.
+- **AI quality is checked by hand:** unit tests cover the logic around the models, but there is no evaluation set that scores `/ask` answers or recommendation quality.
+- **Slow `/ask` on a laptop:** answers take from about 40 seconds to a few minutes, because the models run on the CPU. This is the trade-off for running everything locally and for free.
+- **Thin regional catalogue:** each run discovers about 20 new titles per language from TMDB, so Hindi and Marathi candidates can run out after several dismissals, and replacements then fall back to English.
+- **Book subjects are raw Open Library tags:** they include list labels and synonyms (for example "New York Times bestseller" next to several spellings of Indian mythology), so book answers and picks are less precise than movie and TV genres.
 
 ## Further reading
 

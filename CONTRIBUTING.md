@@ -46,11 +46,25 @@
 
 ## Running tests
 
+**Unit tests and lint** run on the host, with no database or containers needed:
+
+```bash
+python -m venv .venv
+.venv/Scripts/activate              # Windows; use `source .venv/bin/activate` on macOS/Linux
+pip install -r requirements.txt -r requirements-dev.txt
+ruff check dagster flask tests      # lint (real defects only, see ruff.toml)
+pytest -q                           # unit tests
+```
+
+**dbt tests** run against the live database in the stack:
+
 ```bash
 docker compose exec -w /opt/dbt dagster-code dbt deps               # first time only
 docker compose exec -w /opt/dbt dagster-code dbt build              # all models and tests
 docker compose exec -w /opt/dbt dagster-code dbt source freshness   # how recent the raw data is
 ```
+
+**CI** (`.github/workflows/ci.yml`) runs the lint, the unit tests, and `dbt parse` on every push to `main` and on pull requests.
 
 Any job can also be started by hand from the Dagster UI at `localhost:3000`.
 

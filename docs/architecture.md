@@ -98,7 +98,7 @@ The postgres-backup container dumps content_db daily (last 14 kept).
 
 ## Services
 
-All eight services are defined in one `docker-compose.yml`.
+All eight services are defined in one `docker-compose.yml`. Every published port is bound to `127.0.0.1`, so they are reachable from this machine only.
 
 | Service | Port | Role |
 | --- | --- | --- |
