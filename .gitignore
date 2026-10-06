@@ -20,3 +20,5 @@ docs/run_results.json
 design.md
 backups/
 dbt/.user.yml
+.pytest_cache/
+.ruff_cache/

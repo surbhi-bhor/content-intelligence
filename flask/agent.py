@@ -281,9 +281,23 @@ def _ask_conn():
     dsn = os.getenv("ASK_DATABASE_URL").replace("postgresql+psycopg2://", "postgresql://")
     return psycopg2.connect(dsn)
 
-_db = _build_db()
-_schema_info = _db.get_table_info(INCLUDE_TABLES)
-_answer_llm = ChatOllama(model=OLLAMA_MODEL, temperature=0.0, base_url=OLLAMA_BASE_URL)
+# Built on first use rather than at import: the schema introspection needs a
+# live database, and importing this module (e.g. from unit tests of the SQL
+# guards and repairs below) shouldn't.
+_schema_info_cache = None
+_answer_llm_cache = None
+
+def _schema_info() -> str:
+    global _schema_info_cache
+    if _schema_info_cache is None:
+        _schema_info_cache = _build_db().get_table_info(INCLUDE_TABLES)
+    return _schema_info_cache
+
+def _answer_llm():
+    global _answer_llm_cache
+    if _answer_llm_cache is None:
+        _answer_llm_cache = ChatOllama(model=OLLAMA_MODEL, temperature=0.0, base_url=OLLAMA_BASE_URL)
+    return _answer_llm_cache
 
 log.info(f"[agent] backend: ollama ({OLLAMA_MODEL}), best-of-{MAX_SQL_ATTEMPTS} SQL generation")
 
@@ -412,7 +426,7 @@ def _has_missing_content_type_filter(sql: str, question: str) -> bool:
     for kind, pattern in _CONTENT_TYPE_WORDS.items():
         if kind == "book":
             continue  # books have no content_type column - fact_reading_history/dim_book ARE the filter
-        if pattern.search(question) and f"CONTENT_TYPE" in upper:
+        if pattern.search(question) and "CONTENT_TYPE" in upper:
             if f"'{kind.upper()}'" not in upper:
                 return True
         elif pattern.search(question) and "CONTENT_TYPE" not in upper:
@@ -589,7 +603,7 @@ def _generate_sql(question: str, attempt: int, tokens: list) -> str | None:
     reminder = ("\nReminder:\n" + "\n".join(reminder_lines) + "\n") if reminder_lines else ""
     prompt = f"""You write PostgreSQL queries against this schema:
 
-{_schema_info}
+{_schema_info()}
 
 {SCHEMA_RULES}
 
@@ -910,7 +924,7 @@ mention a different item as if it were the answer.{context_block}
 Question: "{question}"
 
 Answer:"""
-        response = _answer_llm.invoke(prompt)
+        response = _answer_llm().invoke(prompt)
         usage = getattr(response, "usage_metadata", None) or {}
         tokens.append((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
         return _guard_against_negation(response.content.strip(), columns, rows, total_count)
@@ -935,7 +949,7 @@ Data:
 {data_block}
 
 Answer:"""
-    response = _answer_llm.invoke(prompt)
+    response = _answer_llm().invoke(prompt)
     usage = getattr(response, "usage_metadata", None) or {}
     tokens.append((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
     return _guard_against_negation(response.content.strip(), columns, rows, total_count)

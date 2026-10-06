@@ -218,7 +218,7 @@ def _query_replacement_candidate(cur, top_genres, exclude_ids, languages, conten
     # threshold starves Hindi/Marathi candidates. Only relax it when every
     # language in this search is regional - a mixed search (fallback tier)
     # keeps the strict bar since it may include English.
-    all_regional = bool(languages) and all(l in _LOW_VOTE_COUNT_LANGUAGES for l in languages)
+    all_regional = bool(languages) and all(lang in _LOW_VOTE_COUNT_LANGUAGES for lang in languages)
     min_vote_count = _MIN_VOTE_COUNT_REGIONAL if all_regional else _MIN_VOTE_COUNT_DEFAULT
     min_vote_average = _MIN_VOTE_AVERAGE_REGIONAL if all_regional else _MIN_VOTE_AVERAGE_DEFAULT
     excluded_genres = _get_excluded_genres(cur)
@@ -321,7 +321,7 @@ def find_replacement_pick(cur, exclude_ids, target_language, target_content_type
      platform, genre_match_count) = row
 
     reason = (
-        f"Matches top genre — filling in for the dismissed pick."
+        "Matches top genre — filling in for the dismissed pick."
         if genre_match_count > 0
         else "Filling in for the dismissed pick."
     )
