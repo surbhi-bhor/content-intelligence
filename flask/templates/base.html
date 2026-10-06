@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Picks{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161210'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-family='Georgia,serif' font-size='20' font-weight='600' fill='%23c98a4e'%3EP%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <script>
+        // Applied before paint (blocking, in <head>) to avoid a flash of
+        // the wrong theme on load - real toggle, not just prefers-color-scheme.
+        (function () {
+            try {
+                var saved = localStorage.getItem("signal-theme");
+                if (saved === "light" || saved === "dark") {
+                    document.documentElement.setAttribute("data-theme", saved);
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <style>
+        /* Hallmark · genre: editorial-warm · macrostructure: Stat-Led (adapted for app) · theme: Reel (custom, Letterboxd-inspired, warm-dark, light toggle available) · nav: N1a-minimal · footer: none */
+        * { box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: var(--color-paper);
+            color: var(--color-ink);
+            font-family: var(--font-body);
+            max-width: 100%;
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--color-paper-3); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--color-rule); }
+
+        a { color: inherit; }
+        :focus-visible {
+            outline: 2px solid var(--color-focus);
+            outline-offset: 2px;
+        }
+
+        /* ── Nav - N1a: wordmark + 2 real destinations ─────────── */
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: var(--z-sticky);
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 var(--space-lg);
+            background: var(--color-paper);
+            border-bottom: 1px solid var(--color-rule);
+            box-sizing: border-box;
+        }
+        .navbar .brand {
+            display: flex;
+            align-items: baseline;
+            gap: var(--space-xs);
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1.05rem;
+            letter-spacing: -0.02em;
+            color: var(--color-ink);
+            text-decoration: none;
+        }
+        .navbar .brand .mark {
+            width: 7px;
+            height: 7px;
+            border-radius: 1px;
+            background: var(--color-accent);
+            flex-shrink: 0;
+        }
+        .navbar .nav-right {
+            display: flex;
+            align-items: center;
+            gap: var(--space-lg);
+        }
+        .navbar .nav-link {
+            color: var(--color-muted);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            padding-bottom: 2px;
+            transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+        }
+        .navbar .nav-link:hover {
+            color: var(--color-ink);
+        }
+        .navbar .nav-link.on {
+            color: var(--color-ink);
+            border-bottom-color: var(--color-accent);
+        }
+        /* Sliding-thumb toggle - one real element moves under the active
+           button (JS positions it via offsetLeft/offsetWidth, exact for
+           any button-count/label-width), not a background swap per button. */
+        .theme-toggle {
+            position: relative;
+            display: flex;
+            align-items: center;
+            background: var(--color-paper-2);
+            border: 1px solid var(--color-rule);
+            border-radius: var(--radius-pill);
+            padding: 2px;
+        }
+        .theme-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            bottom: 2px;
+            left: 2px;
+            width: 0;
+            background: var(--color-accent);
+            border-radius: var(--radius-pill);
+            transition: transform var(--dur-med) var(--ease-out), width var(--dur-med) var(--ease-out);
+            pointer-events: none;
+        }
+        .theme-toggle button {
+            position: relative;
+            z-index: 1;
+            appearance: none;
+            border: none;
+            background: transparent;
+            color: var(--color-muted);
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 0.3rem 0.55rem;
+            border-radius: var(--radius-pill);
+            cursor: pointer;
+            line-height: 1;
+            transition: color var(--dur-short) var(--ease-out);
+        }
+        .theme-toggle button[aria-pressed="true"] {
+            color: var(--color-accent-ink);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .theme-toggle-thumb { transition: none; }
+        }
+        @media (max-width: 767px) {
+            html, body {
+                overflow-x: hidden;
+                overflow-y: auto;
+            }
+            .navbar { padding: 0 var(--space-sm); gap: var(--space-xs); }
+            .navbar .nav-right { gap: var(--space-sm); }
+        }
+
+        {% block extra_style %}{% endblock %}
+    </style>
+</head>
+<body>
+    {% block navbar %}
+    <nav class="navbar">
+        <a class="brand" href="/"><span class="mark"></span>Picks</a>
+        <div class="nav-right">
+            <a class="nav-link {% block nav_health %}{% endblock %}" href="/health">Health</a>
+            <div class="theme-toggle" role="group" aria-label="Theme">
+                <span class="theme-toggle-thumb"></span>
+                <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+                <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+            </div>
+        </div>
+    </nav>
+    {% endblock %}
+
+    {% block content %}{% endblock %}
+
+    <svg width="0" height="0" style="position:absolute">
+      <defs>
+        <filter id="grain-filter" x="0%" y="0%" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.75 0.75" numOctaves="4" seed="2" stitchTiles="stitch" result="noise"/>
+          <feColorMatrix type="saturate" values="0" in="noise" result="grayNoise"/>
+          <feBlend in="SourceGraphic" in2="grayNoise" mode="overlay"/>
+        </filter>
+      </defs>
+    </svg>
+
+    {% block scripts %}{% endblock %}
+    <script>
+        (function () {
+            // Generalized to support any number of .theme-toggle instances on
+            // one page (shared nav + index.html's sidebar both have one) -
+            // every instance stays in sync off the same localStorage key.
+            var root = document.documentElement;
+            var toggles = document.querySelectorAll(".theme-toggle");
+            if (!toggles.length) return;
+
+            function moveThumb(toggle, activeBtn) {
+                var thumb = toggle.querySelector(".theme-toggle-thumb");
+                if (!thumb || !activeBtn) return;
+                thumb.style.width = activeBtn.offsetWidth + "px";
+                thumb.style.transform = "translateX(" + (activeBtn.offsetLeft - 2) + "px)";
+            }
+            function sync() {
+                var current = root.getAttribute("data-theme") || "system";
+                toggles.forEach(function (toggle) {
+                    var btns = toggle.querySelectorAll("[data-theme-set]");
+                    var activeBtn = null;
+                    btns.forEach(function (btn) {
+                        var isActive = btn.dataset.themeSet === current;
+                        btn.setAttribute("aria-pressed", String(isActive));
+                        if (isActive) activeBtn = btn;
+                    });
+                    moveThumb(toggle, activeBtn);
+                });
+            }
+            function setTheme(mode) {
+                if (mode === "system") {
+                    root.removeAttribute("data-theme");
+                    try { localStorage.removeItem("signal-theme"); } catch (e) {}
+                } else {
+                    root.setAttribute("data-theme", mode);
+                    try { localStorage.setItem("signal-theme", mode); } catch (e) {}
+                }
+                sync();
+            }
+            toggles.forEach(function (toggle) {
+                toggle.addEventListener("click", function (e) {
+                    var btn = e.target.closest("[data-theme-set]");
+                    if (btn) setTheme(btn.dataset.themeSet);
+                });
+            });
+            sync();
+        })();
+    </script>
+    <svg width="0" height="0"
+         style="position:absolute;pointer-events:none">
+      <defs>
+        <filter id="grain">
+          <feTurbulence type="fractalNoise"
+            baseFrequency="0.85"
+            numOctaves="4"
+            stitchTiles="stitch"/>
+          <feColorMatrix type="saturate" values="0"/>
+        </filter>
+      </defs>
+    </svg>
+</body>
+</html>

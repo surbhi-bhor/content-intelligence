@@ -1,0 +1,281 @@
+version: 2
+
+models:
+  - name: dim_watchable
+    description: >
+      Conformed dimension unioning movies and TV into a single table for
+      all watchable content - avoids querying two separate tables (and two
+      separate id schemes) for anything that needs mixed movie/TV
+      recommendations or filtering. One row per unique content item
+      (content_id is a synthetic key: 'movie_<tmdb_id>' or 'tv_<tmdb_id>').
+    columns:
+      - name: content_id
+        description: "Synthetic conformed key ('movie_<tmdb_id>' / 'tv_<tmdb_id>') - the join key every downstream fact/bridge table uses."
+        tests:
+          - unique
+          - not_null
+      - name: title
+        description: "Movie or show title."
+        tests:
+          - not_null
+      - name: content_type
+        description: "'movie' or 'tv' - the discriminator this conformed dimension exists to carry."
+        tests:
+          - not_null
+      - name: original_language
+        description: "ISO 639-1 language code, carried through from stg_movies/stg_tv unchanged."
+      - name: primary_creator
+        description: "Director (movies) or creator (TV) - the single named person used for creator-match scoring in recommendations."
+      - name: vote_average
+        description: "TMDB community rating (0-10) - never the personal rating, which lives in fact_watch_history.rating."
+      - name: poster_path
+        description: "TMDB poster image path, used directly by the Flask app's pick cards."
+      - name: is_serial_format
+        description: "True for daily soaps, TV serials, and reality/talk formats (high episodes per season with low votes, or over 100 per season below 1,000 votes). Always false for movies. Recommendations never include these titles."
+        tests:
+          - not_null
+
+  - name: dim_book
+    description: >
+      Conformed dimension for all books - both rated books from Hardcover
+      and discovered unread candidates from OpenLibrary, unioned by
+      construction (OpenLibrary enrichment already merges both sources in
+      stg_books). One row per book (content_id = 'book_<ol_key>').
+    columns:
+      - name: content_id
+        description: "Synthetic conformed key ('book_<ol_key>')."
+        tests:
+          - unique
+          - not_null
+      - name: title
+        description: "Book title."
+        tests:
+          - not_null
+      - name: primary_creator
+        description: "Author - named primary_creator (not 'author') to line up with dim_watchable's column for shared creator-match logic in recommendations."
+      - name: hardcover_id
+        description: "Present for rated books (joined from the personal Hardcover library); null for discovered-but-unrated candidates."
+
+  - name: fact_watch_history
+    description: >
+      Personal movie and TV watch history with ratings. Grain:
+      one row per title watched (joins 1:1 to dim_watchable via
+      content_id). This is the primary taste signal for movie/TV
+      recommendations - taste_profile_op and recommendation_op both read
+      this table, never dim_watchable.vote_average, for anything described
+      as "the personal rating."
+    columns:
+      - name: content_id
+        description: "FK to dim_watchable.content_id."
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_watchable')
+                field: content_id
+      - name: rating
+        description: "Personal 1-10 rating. Nullable for planned/in-progress/watched-but-unrated rows - has_rating is the real flag for whether this is populated, not a null check."
+        tests:
+          - not_null:
+              # rating is legitimately null for planned/in-progress/unrated
+              # items - has_rating is the real flag for "was this rated."
+              # Scoped so this only fails if has_rating lies (=true, rating
+              # null), not on genuinely-unrated rows.
+              config:
+                where: "has_rating = true"
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 10
+              config:
+                where: "has_rating = true"
+      - name: interaction_date
+        description: "When the title was watched/rated (from Simkl's watched_at, not TMDB's release date)."
+      - name: source_ingested_at
+        description: "raw.raw_ratings.ingested_at for this row - the incremental watermark. Only moves when a source value actually changed."
+      - name: consumption_status
+        description: "'consumed' (finished), 'in_progress' (currently watching), or 'planned' (wishlist, never started) - 'watched' questions must filter to 'consumed' specifically, or wishlist/in-progress rows get counted as finished."
+      - name: content_type
+        description: "'movie' or 'tv', carried from dim_watchable - lets this fact table be queried standalone without always joining back to the dimension."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["movie", "tv"]
+
+  - name: fact_reading_history
+    description: >
+      Personal book reading history with ratings. Grain: one
+      row per book read (joins 1:1 to dim_book via content_id). Primary
+      taste signal for book recommendations - same role fact_watch_history
+      plays for movies/TV. No content_type column exists on this model -
+      it's books-only by construction (dim_book has no type field, unlike
+      dim_watchable), so an accepted_values test on content_type isn't
+      applicable here and is intentionally skipped. unique on content_id
+      substitutes as the grain-integrity check for this table instead.
+    columns:
+      - name: content_id
+        description: "FK to dim_book.content_id."
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_book')
+                field: content_id
+      - name: rating
+        description: "Personal rating, normalized to the shared 1-10 scale (Hardcover's native 1-5 scale is preserved separately as native_rating)."
+        tests:
+          - not_null:
+              # Same has_rating pattern as fact_watch_history - currently
+              # zero nulls exist here, but the model allows them (e.g. a
+              # "want to read" book), so this is scoped proactively rather
+              # than waiting for it to break on real future data.
+              config:
+                where: "has_rating = true"
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 10
+              config:
+                where: "has_rating = true"
+      - name: interaction_date
+        description: "When the book was finished (from Hardcover's finished_at), not when it was added to the library."
+      - name: source_ingested_at
+        description: "raw.raw_book_ratings.ingested_at for this row - the incremental watermark. Only moves when a source value actually changed."
+
+  - name: dim_genre
+    description: >
+      Genre reference list for movies and TV only, sourced from TMDB's
+      genre taxonomy. One row per genre. Book subject tags are a
+      deliberately separate domain - see dim_book_subject - since TMDB
+      genres and OpenLibrary subjects aren't the same vocabulary and don't
+      map cleanly onto each other.
+    columns:
+      - name: genre_id
+        description: "Surrogate key (row_number() over the deduplicated genre list - not a TMDB id, TMDB doesn't expose a stable numeric genre id in the ingested payload)."
+        tests:
+          - unique
+          - not_null
+      - name: genre_name
+        description: "Genre name, Title Case as TMDB returns it (e.g. 'Science Fiction') - always compare with ILIKE, an exact match against a guessed case silently returns zero rows."
+        tests:
+          - not_null
+
+  - name: dim_platform
+    description: >
+      Streaming platform reference list, sourced from TMDB's watch
+      providers data and canonicalized (via the canonical_platform_name
+      macro) to collapse near-duplicate provider names. One row per
+      platform.
+    columns:
+      - name: platform_id
+        description: "Surrogate key (row_number() over the canonicalized platform list)."
+        tests:
+          - unique
+          - not_null
+      - name: platform_name
+        description: "TMDB's full official provider name (e.g. 'Amazon Prime Video', not 'Prime') - always compare with ILIKE wildcards, colloquial names people actually type won't exact-match the DB value."
+        tests:
+          - not_null
+
+  - name: bridge_content_genre
+    description: >
+      Many-to-many junction between content (movies/TV) and genres. One
+      row per content-genre pair - required because a single title
+      routinely has multiple genres, which a single foreign key on
+      dim_watchable couldn't represent.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [content_id, genre_id]
+    columns:
+      - name: content_id
+        description: "FK to dim_watchable.content_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_watchable')
+                field: content_id
+      - name: genre_id
+        description: "FK to dim_genre.genre_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_genre')
+                field: genre_id
+
+  - name: bridge_content_platform
+    description: >
+      Many-to-many junction between content (movies/TV) and the streaming
+      platforms it's available on. One row per content-platform pair - a
+      title is routinely available on more than one platform.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [content_id, platform_id]
+    columns:
+      - name: content_id
+        description: "FK to dim_watchable.content_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_watchable')
+                field: content_id
+      - name: platform_id
+        description: "FK to dim_platform.platform_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_platform')
+                field: platform_id
+
+  - name: dim_book_subject
+    description: >
+      Subject-tag reference list for books, sourced from OpenLibrary's
+      subject field - the book-side counterpart to dim_genre (movie/TV
+      genres stay separate because the two vocabularies don't overlap).
+      One row per distinct subject.
+    columns:
+      - name: subject_id
+        description: "Surrogate key for the subject."
+        tests:
+          - unique
+          - not_null
+      - name: subject_name
+        description: "OpenLibrary subject tag, trimmed (e.g. 'Fiction', 'Indic Mythology')."
+        tests:
+          - unique
+          - not_null
+
+  - name: bridge_content_book_subject
+    description: >
+      Many-to-many junction between books and subject tags. One row per
+      book-subject pair - OpenLibrary routinely tags a single work with
+      many subjects (capped at 20 per book at ingestion).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [content_id, subject_id]
+    columns:
+      - name: content_id
+        description: "FK to dim_book.content_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_book')
+                field: content_id
+      - name: subject_id
+        description: "FK to dim_book_subject.subject_id."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_book_subject')
+                field: subject_id

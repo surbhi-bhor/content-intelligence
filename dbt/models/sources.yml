@@ -1,0 +1,89 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    loaded_at_field: ingested_at
+    freshness:
+      warn_after: {count: 8, period: day}
+      error_after: {count: 15, period: day}
+    tables:
+      - name: raw_movies
+        description: "TMDB movie discovery snapshot (popular/upcoming/trending), taken each pipeline run. One row per movie per ingestion date."
+        columns:
+          - name: tmdb_id
+            tests:
+              - not_null
+          - name: ingested_at_date
+            tests:
+              - not_null
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - tmdb_id
+                  - ingested_at_date
+
+      - name: raw_movie_details
+        description: "Full movie enrichment (runtime, budget, director, genres, platforms). One row per movie, current-state."
+        columns:
+          - name: tmdb_id
+            tests:
+              - not_null
+              - unique
+
+      - name: raw_tv
+        description: "TMDB TV discovery snapshot (popular/top_rated/trending), taken each pipeline run. One row per show per ingestion date."
+        columns:
+          - name: tmdb_id
+            tests:
+              - not_null
+          - name: ingested_at_date
+            tests:
+              - not_null
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - tmdb_id
+                  - ingested_at_date
+
+      - name: raw_tv_details
+        description: "Full TV enrichment (seasons, episodes, creator, genres, platforms). One row per show, current-state."
+        columns:
+          - name: tmdb_id
+            tests:
+              - not_null
+              - unique
+
+      - name: raw_ratings
+        description: "Simkl watch history + ratings, movies and shows. Current-state, one row per (simkl_id, content_type)."
+        columns:
+          - name: simkl_id
+            tests:
+              - not_null
+          - name: content_type
+            tests:
+              - not_null
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - simkl_id
+                  - content_type
+
+      - name: raw_book_ratings
+        description: "Hardcover book ratings. Current-state, one row per hardcover_id."
+        columns:
+          - name: hardcover_id
+            tests:
+              - not_null
+              - unique
+
+      - name: raw_books
+        description: "OpenLibrary book metadata enrichment. Current-state, one row per ol_key."
+        columns:
+          - name: ol_key
+            tests:
+              - not_null
+              - unique

@@ -1,0 +1,103 @@
+version: 2
+
+models:
+  - name: stg_movies
+    description: >
+      Cleaned movie snapshot from TMDB's per-run discovery pull. One row per movie per
+      ingestion date, deduplicated to the latest snapshot per tmdb_id.
+      Language flagging is applied here (is_allowed_language), not
+      filtering - every language ingested still flows through to marts;
+      preferred-language enforcement happens at ingestion (tmdb_op.py) and
+      again at the recommendation-candidate query.
+    columns:
+      - name: tmdb_id
+        description: "TMDB's own movie id. Natural key for this model - one row per tmdb_id after dedup."
+        tests:
+          - not_null
+      - name: title
+        description: "Movie title as returned by TMDB."
+      - name: original_language
+        description: "ISO 639-1 language code (e.g. 'en', 'hi', 'mr') as reported by TMDB, not a language name."
+      - name: release_year
+        description: "Year extracted from TMDB's release_date."
+      - name: popularity
+        description: "TMDB's own popularity score - a community/traffic metric, not a rating."
+      - name: vote_average
+        description: "TMDB community rating (0-10) - distinct from the personal rating, which lives in fact_watch_history.rating."
+
+  - name: stg_tv
+    description: >
+      Cleaned TV show snapshot from TMDB's per-run discovery pull. Same pattern as
+      stg_movies. One row per show per ingestion date, deduplicated to the
+      latest snapshot per tmdb_id.
+    columns:
+      - name: tmdb_id
+        description: "TMDB's own show id. Natural key for this model - one row per tmdb_id after dedup."
+        tests:
+          - not_null
+      - name: title
+        description: "Show title as returned by TMDB."
+      - name: original_language
+        description: "ISO 639-1 language code (e.g. 'en', 'hi', 'mr') as reported by TMDB."
+      - name: first_air_date
+        description: "Date the show first aired, per TMDB."
+      - name: number_of_seasons
+        description: "Season count as reported by TMDB - refreshed on re-enrichment, not on every discovery snapshot."
+
+  - name: stg_ratings
+    description: >
+      Personal watch history from Simkl. One row per title
+      watched or tracked, movies and TV together (content_type
+      distinguishes them). Grain: one interaction per content item - a
+      current-state table (re-rating a title updates the same row, it
+      doesn't append a new one).
+    columns:
+      - name: simkl_id
+        description: "Simkl's own id for the watched item. Natural key for this model, scoped per content_type (a movie and a show can share the same simkl_id)."
+        tests:
+          - not_null
+      - name: content_type
+        description: "'movie' or 'show' as Simkl labels it (mapped to 'tv' downstream in fact_watch_history)."
+      - name: rating
+        description: "Personal 1-10 rating. Nullable - Simkl also tracks watched-but-unrated and wishlist items here."
+      - name: watched_at
+        description: "Timestamp Simkl recorded for this interaction - falls back to last_watched_at when no explicit rated-at timestamp exists."
+      - name: tmdb_id
+        description: "TMDB id captured from Simkl's own cross-reference data, used to join to dim_watchable without fragile title matching."
+
+  - name: stg_book_ratings
+    description: >
+      Personal reading history from Hardcover. One row per
+      book rated. Grain: one rating per book - a current-state table,
+      re-rating overwrites rather than appending.
+    columns:
+      - name: hardcover_id
+        description: "Hardcover's own book id. Natural key for this model."
+        tests:
+          - not_null
+      - name: title
+        description: "Book title as returned by Hardcover."
+      - name: author
+        description: "Primary author, from Hardcover's contributions data."
+      - name: rating
+        description: "Personal rating on Hardcover's native 1-5 scale (normalized to the shared 1-10 scale downstream in fact_reading_history)."
+
+  - name: stg_books
+    description: >
+      Book metadata from OpenLibrary. Covers both the personally rated books
+      (enrichment of existing Hardcover ratings) and discovered unread
+      candidates (new books surfaced from top-rated subjects/authors, with
+      no rating yet). One row per OpenLibrary key (ol_key).
+    columns:
+      - name: ol_key
+        description: "OpenLibrary's own work key. Natural key for this model."
+        tests:
+          - not_null
+      - name: title
+        description: "Book title as returned by OpenLibrary (may differ slightly from the Hardcover title for the same book)."
+      - name: author
+        description: "Primary author, from OpenLibrary's author_name field."
+      - name: subjects
+        description: "OpenLibrary subject tags (JSON array) - the book-domain equivalent of a movie/TV genre, feeding dim_book_subject."
+      - name: ratings_average
+        description: "OpenLibrary's own community rating, when available - distinct from the personal Hardcover rating."

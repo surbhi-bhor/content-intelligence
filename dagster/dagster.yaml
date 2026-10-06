@@ -1,0 +1,6 @@
+storage:
+  sqlite:
+    base_dir: /opt/dagster/dagster_home
+
+workspace:
+  file: /opt/dagster/app/workspace.yaml

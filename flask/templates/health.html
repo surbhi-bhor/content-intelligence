@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}System — Picks{% endblock %}
+{% block nav_health %}on{% endblock %}
+
+{% block extra_style %}
+        /* Hallmark · genre: atmospheric · macrostructure: Stat-Led (adapted for app)
+         * theme: Queue (custom, Netflix-inspired) · nav: N1a · footer: none */
+        body {
+            overflow: auto !important;
+        }
+        .health-page {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 6.5rem var(--space-lg) var(--space-2xl);
+        }
+        .health-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--space-lg);
+            flex-wrap: wrap;
+            gap: var(--space-md);
+        }
+        .health-title-row {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+        .health-title {
+            font-family: var(--font-display);
+            font-size: 1.375rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--color-ink);
+            margin: 0;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-xs);
+            padding: 0.3rem 0.75rem;
+            border-radius: var(--radius-pill);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .status-badge .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+        }
+        /* Semantic health colors - separate from the brand accent, on purpose. */
+        .status-green { background: oklch(70% 0.15 150 / 0.14); color: oklch(78% 0.16 150); }
+        .status-green .dot { background: oklch(78% 0.16 150); }
+        .status-yellow { background: oklch(80% 0.15 90 / 0.14); color: oklch(85% 0.15 90); }
+        .status-yellow .dot { background: oklch(85% 0.15 90); }
+        .status-red { background: color-mix(in oklch, var(--color-danger) 16%, transparent); color: var(--color-danger); }
+        .status-red .dot { background: var(--color-danger); }
+
+        .refresh-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-xs);
+            background: var(--color-paper-2);
+            border: 1px solid var(--color-rule);
+            border-radius: var(--radius-input);
+            padding: 0.5rem 0.9rem;
+            color: var(--color-ink);
+            font-family: var(--font-body);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: border-color var(--dur-short) var(--ease-out);
+        }
+        .refresh-btn:hover {
+            border-color: var(--color-accent);
+        }
+
+        .health-section {
+            background: var(--color-paper-2);
+            border: 1px solid var(--color-rule);
+            border-radius: var(--radius-card);
+            padding: 0.25rem var(--space-md);
+            margin-bottom: var(--space-lg);
+        }
+        .health-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-md);
+            padding: 0.9rem 0;
+            border-bottom: 1px solid var(--color-rule);
+        }
+        .health-row:last-child {
+            border-bottom: none;
+        }
+        .health-row-label {
+            color: var(--color-muted);
+            font-size: 0.875rem;
+        }
+        .health-row-value {
+            font-family: var(--font-mono);
+            color: var(--color-data);
+            font-size: 0.9375rem;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+        }
+        .health-row-value.is-warn {
+            color: var(--color-danger);
+        }
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--color-neutral);
+            margin: 0 0 var(--space-xs);
+        }
+{% endblock %}
+
+{% block content %}
+<div class="health-page">
+    <div class="health-header">
+        <div class="health-title-row">
+            <h1 class="health-title">System</h1>
+            <span class="status-badge status-{{ status }}">
+                <span class="dot"></span>
+                {% if status == "green" %}Healthy{% elif status == "yellow" %}Stale{% else %}Down{% endif %}
+            </span>
+        </div>
+        <a class="refresh-btn" href="/health">Refresh</a>
+    </div>
+
+    <p class="section-label">Pipeline</p>
+    <div class="health-section">
+        <div class="health-row">
+            <span class="health-row-label">Last updated</span>
+            <span class="health-row-value">
+                {% if last_run %}{{ last_run.strftime("%b %d %Y %I:%M%p").lower() }}{% else %}never{% endif %}
+            </span>
+        </div>
+        <div class="health-row">
+            <span class="health-row-label">Current picks</span>
+            <span class="health-row-value {% if picks_today == 0 %}is-warn{% endif %}">
+                {% if picks_today > 0 %}{{ picks_today }} picks ready{% else %}No picks generated yet{% endif %}
+            </span>
+        </div>
+        <div class="health-row">
+            <span class="health-row-label">Last failed run</span>
+            <span class="health-row-value {% if failure_is_current %}is-warn{% endif %}">
+                {% if last_failure %}{{ last_failure[0] }} · {{ last_failure[1].strftime("%b %d %Y %I:%M%p").lower() }}{% else %}none{% endif %}
+            </span>
+        </div>
+        <div class="health-row">
+            <span class="health-row-label">AI backend</span>
+            <span class="health-row-value">{{ ai_backend }}</span>
+        </div>
+    </div>
+
+    <p class="section-label">Table Row Counts</p>
+    <div class="health-section">
+        {% for table, count in table_counts.items() %}
+        <div class="health-row">
+            <span class="health-row-label">{{ table }}</span>
+            <span class="health-row-value {% if count == 0 %}is-warn{% endif %}">{{ "{:,}".format(count) }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

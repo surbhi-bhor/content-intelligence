@@ -1,0 +1,207 @@
+/* Hallmark · genre: editorial-warm · macrostructure: Stat-Led (adapted for app) · theme: Reel (custom, Letterboxd-inspired, warm-dark) · nav: N1a · footer: none (app, not marketing page) */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Color - Reel: warm charcoal/espresso ground + muted amber accent +
+     warm green match-score. Pivot away from Queue's Netflix-register
+     near-black + saturated red, toward a film-archive/editorial warmth. ── */
+  --color-paper:      oklch(12% 0.015 50);
+  --color-paper-2:    oklch(17% 0.018 50);
+  --color-paper-3:    oklch(23% 0.020 50);
+  --color-rule:       oklch(30% 0.020 50);
+  --color-neutral:    oklch(58% 0.018 50);
+  --color-muted:      oklch(75% 0.018 50);
+  --color-ink:        oklch(94% 0.014 65);   /* warm off-white, not pure white */
+  --color-accent:     oklch(62% 0.130 55);   /* muted amber/ochre, not saturated red */
+  --color-accent-ink: oklch(14% 0.020 50);   /* dark ink reads correctly on the lighter amber */
+  --color-focus:      oklch(68% 0.120 55);
+
+  /* Semantic - separate from the brand accent */
+  --color-data:   oklch(76% 0.170 148);  /* match-score green - kept as-is, already correct */
+  --color-danger: oklch(58% 0.145 40);   /* warm red-orange, destructive hover only */
+
+  /* Content-type identity - re-hued off warm accent (55°) and data (148°)
+     so none of the three collides with either. */
+  --color-movie:  oklch(72% 0.130 210);
+  --color-tv:     oklch(70% 0.120 265);
+  --color-book:   oklch(70% 0.100 325);
+
+  /* ── Type - editorial: serif display for headlines AND numerals (a
+     rating should read as a verdict, not a KPI), plain sans for body,
+     mono reserved for genuinely technical text only. ── */
+  --font-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+  --font-body:    "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  --text-xs:      0.64rem;
+  --text-sm:      0.8rem;
+  --text-base:    1rem;
+  --text-md:      1.25rem;
+  --text-lg:      1.5625rem;
+  --text-xl:      1.9531rem;
+  --text-2xl:     2.4414rem;
+  --text-display: clamp(2.25rem, 3vw + 1rem, 3.25rem);
+
+  /* ── Space - 4pt scale ── */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+
+  /* ── Motion ── */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-short: 150ms;
+  --dur-med:   220ms;
+
+  /* ── Radius ── */
+  --radius-card:   12px;
+  --radius-poster: 6px;
+  --radius-pill:   999px;
+  --radius-input:  10px;
+
+  /* ── Z-scale ── */
+  --z-base:     1;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
+}
+
+/* ── Light - warm mirror, same hue family (50°) as dark instead of the
+   old neutral-30° mirror, so the toggle doesn't jump registers. ── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-paper:      oklch(97% 0.012 60);
+  --color-paper-2:    oklch(93% 0.015 58);
+  --color-paper-3:    oklch(89% 0.018 56);
+  --color-rule:       oklch(80% 0.018 55);
+  --color-neutral:    oklch(52% 0.018 50);
+  --color-muted:      oklch(38% 0.018 50);
+  --color-ink:        oklch(18% 0.020 50);
+  --color-accent:     oklch(52% 0.140 55);
+  --color-accent-ink: oklch(99% 0.006 60);
+  --color-focus:      oklch(48% 0.130 55);
+  --color-data:       oklch(46% 0.150 148);
+  --color-danger:     oklch(50% 0.150 40);
+  --color-movie:      oklch(50% 0.130 210);
+  --color-tv:         oklch(50% 0.120 265);
+  --color-book:       oklch(48% 0.100 325);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --color-paper:      oklch(97% 0.012 60);
+    --color-paper-2:    oklch(93% 0.015 58);
+    --color-paper-3:    oklch(89% 0.018 56);
+    --color-rule:       oklch(80% 0.018 55);
+    --color-neutral:    oklch(52% 0.018 50);
+    --color-muted:      oklch(38% 0.018 50);
+    --color-ink:        oklch(18% 0.020 50);
+    --color-accent:     oklch(52% 0.140 55);
+    --color-accent-ink: oklch(99% 0.006 60);
+    --color-focus:      oklch(48% 0.130 55);
+    --color-data:       oklch(46% 0.150 148);
+    --color-danger:     oklch(50% 0.150 40);
+    --color-movie:      oklch(50% 0.130 210);
+    --color-tv:         oklch(50% 0.120 265);
+    --color-book:       oklch(48% 0.100 325);
+  }
+}
+
+/* ── CHANGE 1: film grain (background gradient itself lives in
+   index.html's extra_style - this rule used to duplicate/fight it with a
+   fully-overridden `background:` shorthand that never actually rendered;
+   removed rather than left as dead, confusing CSS) ───────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 300px 300px;
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── CHANGE 2: scroll reveals ───────────────────────────────────── */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 450ms ease-out,
+              transform 450ms ease-out;
+}
+.scroll-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ── CHANGE 4: ask bar minimal ───────────────────────────────────── */
+#ask-input, .ask-bar-input {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--color-rule) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: border-bottom-color 150ms ease,
+              box-shadow 150ms ease !important;
+}
+#ask-input:focus, .ask-bar-input:focus {
+  outline: none !important;
+  border-bottom-color: var(--color-accent) !important;
+  box-shadow: 0 2px 0 var(--color-accent) !important;
+}
+
+/* ── CHANGE 5: page load card stagger ───────────────────────────── */
+/* Every card staggers in by its own --enter-delay (set inline per card,
+   loop.index0 * 40ms), the CSS-only equivalent of
+   gsap.from('.poster-card', {stagger: 0.04}) without adding a JS library. */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.pick-card {
+  animation: cardIn 350ms ease-out both;
+  animation-delay: calc(100ms + var(--enter-delay, 0) * 1ms);
+}
+.pick-card.scroll-reveal {
+  animation: none !important;
+}
+
+/* ── 3D tilt - hover physicality on non-featured cards ──────────── */
+.pick-card {
+  transform-style: preserve-3d;
+  will-change: transform;
+  transition: transform 100ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pick-card {
+    animation: none !important;
+    transform: none !important;
+  }
+  .scroll-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  [class*="bar"] {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,17 @@
+# Local dev/editor environment only - mirrors what dagster/Dockerfile and
+# flask/Dockerfile install inside their containers. The app itself always runs
+# in Docker; this file exists so VS Code (Pylance, dbt Power User) can resolve
+# imports and find a local `dbt` binary without needing to reach into the containers.
+dagster==1.13.18
+dagster-webserver==1.13.18
+dagster-postgres==0.29.18
+requests==2.34.2
+pydantic==2.13.4
+psycopg2-binary==2.9.12
+python-dotenv==1.2.3
+dbt-core==1.12.2
+dbt-postgres==1.11.0
+flask==3.1.3
+langchain-community==0.4.2
+langchain-ollama==1.1.0
+sqlalchemy==2.0.52
