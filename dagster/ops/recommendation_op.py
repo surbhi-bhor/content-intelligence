@@ -307,7 +307,10 @@ def call_ollama_picks(shortlist, summary_text, genre_avg, creator_avg, platforms
             "stream": False,
             "options": {"temperature": 0.4},
         },
-        timeout=120,
+        # 300s, not 120s: on a CPU-only machine a cold model load (e.g. after
+        # the Ollama container restarts) plus the prompt can exceed two
+        # minutes. A timeout still falls back to deterministic selection.
+        timeout=300,
     )
     response.raise_for_status()
     elapsed = time.time() - start
