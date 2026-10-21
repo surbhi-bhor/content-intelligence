@@ -23,6 +23,7 @@ A self-hosted data platform that turns personal movie, TV, and book history into
 - [Tech stack](#tech-stack)
 - [How the AI features work](#how-the-ai-features-work)
 - [Data quality and reliability](#data-quality-and-reliability)
+- [Evaluation](#evaluation)
 - [Dashboards (Metabase)](#dashboards-metabase)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
@@ -114,7 +115,31 @@ Both features follow the same principle: a small local model is useful, but not 
 - **Failure alerts:** every failed run is recorded in `meta.pipeline_alerts` and triggers an email. The `/health` page turns red until a later run succeeds.
 - **Backups:** a backup container runs `pg_dump` daily and keeps the last 14 copies.
 - **English-only display text:** everything shown in the app and dashboards is English. Book authors use the English spelling Open Library lists (for example Haruki Murakami rather than the Japanese script), non-English book subject tags are dropped, and any name still in another script is left blank. A dbt test fails the run if non-English script reaches a title, name, genre, platform, or subject.
-- **Unit tests and CI:** 57 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching, English author names). GitHub Actions runs lint, the tests, and a dbt parse on every push.
+- **Unit tests and CI:** 65 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching, English author names, and the eval scoring rules). GitHub Actions runs lint, the tests, and a dbt parse on every push.
+
+## Evaluation
+
+[`flask/eval/questions.py`](flask/eval/questions.py) holds 20 questions for `/ask`, none of them taken from the prompt's worked examples. Each has a hand-written gold query, and [`run_ask_eval.py`](flask/eval/run_ask_eval.py) compares the rows the agent's SQL returns with the gold rows (exact count, top item with ties allowed, exact set, or every returned title inside the gold set). Only the SQL is scored, not the wording of the answer.
+
+**Baseline with `llama3.2:3b` on CPU (2026-10-22): 9 of 20 passed (45%).** Full per-question output is in [`flask/eval/results.json`](flask/eval/results.json).
+
+| Question type | Passed |
+| --- | --- |
+| Counts (TV, books, Hindi movies, comedies, watchlist) | 4 of 5 |
+| Rankings and single facts (top movie, genre, director, author, longest book, platform) | 1 of 7 |
+| Comparison (movies vs TV) | 0 of 1 |
+| Lists of watched or read items | 3 of 4 |
+| Discovery over unwatched titles | 1 of 2 |
+| This week's picks | 0 of 1 |
+
+Filtered lists and counts mostly work. Rankings are the weak spot, and the failures fall into a few repeatable patterns:
+
+- No `ORDER BY` on a ranking query, so the first row is arbitrary (most-watched and lowest-rated genre).
+- `ORDER BY rating DESC` without `NULLS LAST`, so an unrated title ranks first (highest-rated movie).
+- The right table but the wrong column (longest book sorted by date), or the wrong table (this week's book picks read from reading history).
+- Status confusion: "watchlist" mapped to `in_progress` instead of `planned`.
+
+Each pattern can be handled by a check or repair in `_try_execute`, like the existing ones, and the eval shows whether a change helps. Recommendation quality is not scored yet; picks are checked for validity (unwatched, available, language slots) but not for how good they are.
 
 ## Dashboards (Metabase)
 
@@ -133,7 +158,8 @@ Metabase runs at `localhost:4000` and reads the same Postgres warehouse. The mai
 
 - All questions are native SQL against `marts` and `meta`, so they stay in sync with the dbt models.
 - Metabase stores its own settings, questions, and dashboards in an internal database on the `metabase_data` volume, which survives container rebuilds.
-- On a fresh install, Metabase asks for an admin account and a database connection on the first visit (host `postgres`, port `5432`, database set to the `POSTGRES_DB` value). Dashboards are not part of the repository, so they need to be recreated there.
+- The dashboard is exported to [`metabase/my_content_analytics.json`](metabase/my_content_analytics.json): all 18 questions with their SQL, the four tabs, the layout, and both filters.
+- On a fresh install, Metabase asks for an admin account and a database connection on the first visit. Name the connection `Content Pipeline` (host `postgres`, port `5432`, database set to the `POSTGRES_DB` value), add `MB_EMAIL` and `MB_PASSWORD` (or `MB_API_KEY`) to `.env`, and recreate the dashboard with `python scripts/metabase_sync.py import`. After changing the dashboard in Metabase, run `python scripts/metabase_sync.py export` to save it back to the repository.
 
 ## Quick start
 
@@ -223,7 +249,10 @@ dbt/
   models/marts/      11 tables: dimensions, bridges, facts, book scores
 flask/               Web app: picks page, /ask, /not-interested, /health, /usage
   templates/          base, index (picks + ask bar), health
-docs/                Architecture and case study
+  eval/               20-question /ask evaluation set and runner
+metabase/            Exported Metabase dashboard (questions, tabs, layout)
+scripts/             metabase_sync.py: export or import the dashboard
+docs/                Architecture, case study, and threat model
 tests/               Unit tests (pytest)
 .github/workflows/   CI: lint, unit tests, dbt parse
 docker-compose.yml   All 8 services
@@ -232,9 +261,9 @@ backups/             Daily database dumps (created at runtime, not committed)
 
 ## Limitations
 
-- **Built for one person on one machine:** services are reachable only from this machine. Flask and Dagster have no login of their own, so the setup is not meant for shared or hosted use. Metabase has its own login.
+- **Built for one person on one machine:** services are reachable only from this machine. Flask and Dagster have no login of their own, so the setup is not meant for shared or hosted use. Metabase has its own login. [`docs/security.md`](docs/security.md) has the threat model, the known gaps, and what hosting would require.
 - **Backups stay on the same machine:** daily dumps protect against a damaged database, not against losing the machine. The history can be re-pulled from Simkl and Hardcover if needed.
-- **AI quality is checked by hand:** unit tests cover the logic around the models, but there is no evaluation set that scores `/ask` answers or recommendation quality.
+- **`/ask` gets 45% on its evaluation set:** counts and filtered lists are mostly right, but rankings often are not (see [Evaluation](#evaluation)). Recommendation quality has no evaluation set yet.
 - **Slow `/ask` on a laptop:** answers take from about 40 seconds to a few minutes, because the models run on the CPU. This is the trade-off for running everything locally and for free.
 - **Thin regional catalogue:** each run discovers about 20 new titles per language from TMDB, so Hindi and Marathi candidates can run out after several dismissals, and replacements then fall back to English.
 - **Book subjects are raw Open Library tags:** generic tags are filtered out, but synonyms remain (several spellings of Indian mythology), so book answers and picks are less precise than movie and TV genres.
@@ -244,6 +273,7 @@ backups/             Daily database dumps (created at runtime, not committed)
 
 - [`docs/architecture.md`](docs/architecture.md): diagram, services, run order, and where data is stored.
 - [`docs/case-study.md`](docs/case-study.md): motivation, design choices, problems solved, and lessons learned.
+- [`docs/security.md`](docs/security.md): threat model, controls, and known gaps.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): adding a data source or dbt model, running tests, and viewing dbt docs.
 
 ## Data sources and attribution

@@ -1,0 +1,1039 @@
+{
+  "name": "My Content Analytics",
+  "description": null,
+  "parameters": [
+    {
+      "id": "3920c5ab",
+      "name": "Content Type",
+      "slug": "content_type",
+      "type": "string/=",
+      "sectionId": "string",
+      "default": null,
+      "isMultiSelect": false
+    },
+    {
+      "id": "3d9b031b",
+      "name": "Date Range",
+      "slug": "date_range",
+      "type": "date/all-options",
+      "sectionId": "date",
+      "default": null
+    }
+  ],
+  "tabs": [
+    "Content Pipeline",
+    "Watch & Ratings",
+    "Books",
+    "Glossary"
+  ],
+  "cards": [
+    {
+      "name": "Your Average Rating by Genre",
+      "description": "Average personal rating per genre, movies and TV combined. A genre needs at least 2 ratings to appear, so one score can't make or break a category.",
+      "display": "row",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "template-tags": [
+              {
+                "default": null,
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/DateTime",
+                    "effective-type": "type/DateTime"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "interaction_date"
+                  }
+                ],
+                "id": "3ea4d216-f1d2-4242-95b4-fc9859795068",
+                "name": "date_range",
+                "display-name": "Date Range",
+                "widget-type": "date/all-options"
+              },
+              {
+                "default": null,
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/Text",
+                    "effective-type": "type/Text"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "content_type"
+                  }
+                ],
+                "id": "93022aa7-b174-4123-8185-84080930cc4f",
+                "name": "content_type",
+                "display-name": "Content Type",
+                "widget-type": "string/="
+              }
+            ],
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT dg.genre_name AS \"Genre\", AVG(fact_watch_history.rating) AS \"Avg Rating\", COUNT(*) AS \"Titles Rated\"\nFROM marts.fact_watch_history\nJOIN marts.bridge_content_genre bcg ON bcg.content_id = fact_watch_history.content_id\nJOIN marts.dim_genre dg ON dg.genre_id = bcg.genre_id\nWHERE fact_watch_history.rating IS NOT NULL\n  AND fact_watch_history.consumption_status = 'consumed'\n  [[AND {{content_type}}]]\n  [[AND {{date_range}}]]\nGROUP BY dg.genre_name\nHAVING COUNT(*) >= 2\nORDER BY \"Avg Rating\" DESC"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "graph.dimensions": [
+          "Genre"
+        ],
+        "series_settings": {
+          "Avg Rating": {
+            "color": "#06B6D4"
+          }
+        },
+        "graph.show_values": true,
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "graph.series_order": [],
+        "column_settings": {
+          "[\"name\",\"Avg Rating\"]": {
+            "decimals": 2,
+            "number_style": "decimal"
+          }
+        },
+        "graph.metrics": [
+          "Avg Rating"
+        ]
+      }
+    },
+    {
+      "name": "Content Consumed Per Month",
+      "description": "Count of titles marked consumed, grouped by the month they were watched.",
+      "display": "area",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "template-tags": [
+              {
+                "display-name": "Date Range",
+                "default": null,
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/DateTime",
+                    "effective-type": "type/DateTime"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "interaction_date"
+                  }
+                ],
+                "id": "3ea4d216-f1d2-4242-95b4-fc9859795068",
+                "name": "date_range",
+                "widget-type": "date/all-options"
+              },
+              {
+                "display-name": "Content Type",
+                "default": null,
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/Text",
+                    "effective-type": "type/Text"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "content_type"
+                  }
+                ],
+                "id": "93022aa7-b174-4123-8185-84080930cc4f",
+                "name": "content_type",
+                "widget-type": "string/="
+              }
+            ],
+            "native": "SELECT date_trunc('month', interaction_date) AS \"Month\", COUNT(*) AS \"Items\" FROM marts.fact_watch_history WHERE interaction_date IS NOT NULL AND consumption_status = 'consumed' [[AND {{content_type}}]] [[AND {{date_range}}]] GROUP BY \"Month\" ORDER BY \"Month\""
+          }
+        ]
+      },
+      "visualization_settings": {
+        "graph.dimensions": [
+          "Month"
+        ],
+        "series_settings": {
+          "Items": {
+            "color": "#06B6D4"
+          }
+        },
+        "graph.show_values": true,
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "graph.series_order": [],
+        "graph.metrics": [
+          "Items"
+        ]
+      }
+    },
+    {
+      "name": "Top Platforms You Watch On",
+      "description": "Platforms ranked by number of titles watched on them.",
+      "display": "row",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "template-tags": [
+              {
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/DateTime",
+                    "effective-type": "type/DateTime"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "interaction_date"
+                  }
+                ],
+                "id": "311b5973-70a7-48e0-9b28-88e7fd975ee3",
+                "name": "date_range",
+                "display-name": "Date Range",
+                "default": null,
+                "widget-type": "date/all-options"
+              },
+              {
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/Text",
+                    "effective-type": "type/Text"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_watch_history",
+                    "column": "content_type"
+                  }
+                ],
+                "id": "793840fa-2533-4139-9ec4-fdf31a91a543",
+                "name": "content_type",
+                "display-name": "Content Type",
+                "default": null,
+                "widget-type": "string/="
+              }
+            ],
+            "native": "SELECT dp.platform_name AS \"Platform\", COUNT(*) AS \"Items\"\nFROM marts.fact_watch_history\nJOIN marts.bridge_content_platform bcp ON bcp.content_id = fact_watch_history.content_id\nJOIN marts.dim_platform dp ON dp.platform_id = bcp.platform_id\nWHERE dp.platform_name IS NOT NULL\n  AND fact_watch_history.consumption_status = 'consumed'\n  [[AND {{content_type}}]]\n  [[AND {{date_range}}]]\nGROUP BY dp.platform_name\nORDER BY \"Items\" DESC\nLIMIT 10"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "graph.dimensions": [
+          "Platform"
+        ],
+        "series_settings": {
+          "Items": {
+            "color": "#06B6D4"
+          }
+        },
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "graph.series_order": [],
+        "graph.metrics": [
+          "Items"
+        ]
+      }
+    },
+    {
+      "name": "Your Average Rating by Book Subject",
+      "description": "Average personal rating per book subject tag. A subject needs at least 2 ratings to appear.",
+      "display": "row",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "template-tags": [
+              {
+                "default": null,
+                "type": "dimension",
+                "dimension": [
+                  "field",
+                  {
+                    "base-type": "type/DateTime",
+                    "effective-type": "type/DateTime"
+                  },
+                  {
+                    "schema": "marts",
+                    "table": "fact_reading_history",
+                    "column": "interaction_date"
+                  }
+                ],
+                "id": "d83864bd-2bb8-4ca3-abe0-3e88e5b13110",
+                "name": "date_range",
+                "display-name": "Date Range",
+                "widget-type": "date/all-options"
+              }
+            ],
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT dbs.subject_name AS \"Subject\", AVG(fact_reading_history.rating) AS \"Avg Rating\", COUNT(*) AS \"Books Rated\"\nFROM marts.fact_reading_history\nJOIN marts.bridge_content_book_subject bcbs ON bcbs.content_id = fact_reading_history.content_id\nJOIN marts.dim_book_subject dbs ON dbs.subject_id = bcbs.subject_id\nWHERE fact_reading_history.rating IS NOT NULL\n  AND fact_reading_history.consumption_status = 'consumed'\n  AND NOT dbs.is_generic\n  [[AND {{date_range}}]]\nGROUP BY dbs.subject_name\nHAVING COUNT(*) >= 2\nORDER BY \"Avg Rating\" DESC"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "graph.dimensions": [
+          "Subject"
+        ],
+        "series_settings": {
+          "Avg Rating": {
+            "color": "#06B6D4"
+          }
+        },
+        "graph.show_values": true,
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "graph.series_order": [],
+        "column_settings": {
+          "[\"name\",\"Avg Rating\"]": {
+            "decimals": 2,
+            "number_style": "decimal"
+          }
+        },
+        "graph.metrics": [
+          "Avg Rating"
+        ]
+      }
+    },
+    {
+      "name": "Total Unwatched Candidates",
+      "description": "Count of catalog items (movies, TV, books) not yet watched or read that meet the recommendation quality bar.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Total Unwatched Candidates\" FROM marts.dim_watchable dw WHERE dw.content_id NOT IN (SELECT content_id FROM marts.fact_watch_history)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Unwatched Movies",
+      "description": "Movies in the catalog not yet watched.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Unwatched Movies\" FROM marts.dim_watchable dw WHERE dw.content_type = 'movie' AND dw.content_id NOT IN (SELECT content_id FROM marts.fact_watch_history)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Unwatched TV Shows",
+      "description": "TV shows in the catalog not yet watched.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Unwatched TV Shows\" FROM marts.dim_watchable dw WHERE dw.content_type = 'tv' AND dw.content_id NOT IN (SELECT content_id FROM marts.fact_watch_history)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Titles Rated",
+      "description": "Count of movies/TV titles with a personal rating on record, all-time.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Titles Rated\" FROM marts.fact_watch_history WHERE rating IS NOT NULL"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Avg Rating",
+      "description": "Average personal rating across all rated movies/TV titles, all-time.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT ROUND(AVG(rating)::numeric, 2) AS \"Avg Rating\" FROM marts.fact_watch_history WHERE rating IS NOT NULL"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Rated This Month",
+      "description": "Count of titles rated in the current calendar month.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Rated This Month\" FROM marts.fact_watch_history WHERE rating IS NOT NULL AND date_trunc('month', interaction_date) = date_trunc('month', CURRENT_DATE)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Books Rated",
+      "description": "Count of books with a personal rating on record, all-time.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Books Rated\" FROM marts.fact_reading_history WHERE rating IS NOT NULL AND consumption_status = 'consumed'"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Avg Book Rating",
+      "description": "Average personal rating across all rated books.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT ROUND(AVG(rating)::numeric, 2) AS \"Avg Book Rating\" FROM marts.fact_reading_history WHERE rating IS NOT NULL AND consumption_status = 'consumed'"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Books Rated This Month",
+      "description": "Count of books rated in the current calendar month.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) AS \"Books Rated This Month\" FROM marts.fact_reading_history WHERE rating IS NOT NULL AND consumption_status = 'consumed' AND date_trunc('month', interaction_date) = date_trunc('month', CURRENT_DATE)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Most Watched Genre",
+      "description": "Genre with the highest number of rated titles, by volume watched, not by average rating.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT g.genre_name FROM marts.dim_genre g JOIN marts.bridge_content_genre bcg ON g.genre_id = bcg.genre_id JOIN marts.fact_watch_history fwh ON bcg.content_id = fwh.content_id GROUP BY g.genre_name ORDER BY COUNT(*) DESC LIMIT 1"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Unread Books",
+      "description": "Books in the catalog with no reading-history record yet.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) FROM marts.book_candidate_scores WHERE content_id NOT IN (SELECT content_id FROM meta.not_interested)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B",
+        "graph.colors": [
+          "#F59E0B",
+          "#06B6D4",
+          "#8B5CF6"
+        ],
+        "series_settings": {},
+        "graph.series_order": []
+      }
+    },
+    {
+      "name": "Total Catalog Size",
+      "description": "Total distinct movies and TV shows ingested into the catalog, watched or not.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT COUNT(*) FROM marts.dim_watchable"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      }
+    },
+    {
+      "name": "Last Pipeline Run",
+      "description": "Timestamp of the most recent taste profile or recommendation refresh.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT GREATEST((SELECT MAX(generated_at) FROM meta.taste_profile), (SELECT MAX(generated_at) FROM meta.daily_recommendations_watch), (SELECT MAX(generated_at) FROM meta.daily_recommendations_books))"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      }
+    },
+    {
+      "name": "Raw Rows Ingested",
+      "description": "Total raw rows currently stored across all 5 source tables: movies, TV, ratings, books, book ratings.",
+      "display": "scalar",
+      "type": "question",
+      "dataset_query": {
+        "lib/type": "mbql/query",
+        "database": "Content Pipeline",
+        "stages": [
+          {
+            "lib/type": "mbql.stage/native",
+            "native": "SELECT (SELECT COUNT(*) FROM raw.raw_movies) + (SELECT COUNT(*) FROM raw.raw_tv) + (SELECT COUNT(*) FROM raw.raw_ratings) + (SELECT COUNT(*) FROM raw.raw_books) + (SELECT COUNT(*) FROM raw.raw_book_ratings) + (SELECT COUNT(*) FROM raw.raw_movie_details) + (SELECT COUNT(*) FROM raw.raw_tv_details)"
+          }
+        ]
+      },
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      }
+    }
+  ],
+  "dashcards": [
+    {
+      "row": 0,
+      "col": 0,
+      "size_x": 24,
+      "size_y": 3,
+      "visualization_settings": {
+        "text": "# Content Pipeline\nWhat has been ingested from TMDB/OpenLibrary and is available to recommend, but has not been watched or read yet.",
+        "virtual_card": {
+          "display": "text"
+        }
+      },
+      "tab": 0,
+      "card": null,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 0,
+      "card": 4,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 8,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 0,
+      "card": 5,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 16,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 0,
+      "card": 6,
+      "parameter_mappings": []
+    },
+    {
+      "row": 6,
+      "col": 0,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      },
+      "tab": 0,
+      "card": 15,
+      "parameter_mappings": []
+    },
+    {
+      "row": 6,
+      "col": 8,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      },
+      "tab": 0,
+      "card": 16,
+      "parameter_mappings": []
+    },
+    {
+      "row": 6,
+      "col": 16,
+      "size_x": 8,
+      "size_y": 3,
+      "visualization_settings": {
+        "scalar.field": "#F59E0B"
+      },
+      "tab": 0,
+      "card": 17,
+      "parameter_mappings": []
+    },
+    {
+      "row": 0,
+      "col": 0,
+      "size_x": 24,
+      "size_y": 3,
+      "visualization_settings": {
+        "text": "# Watch & Ratings\nMovies and TV only. Averages require at least 2 ratings - a single high score cannot make a category a leader on its own.",
+        "virtual_card": {
+          "display": "text"
+        }
+      },
+      "tab": 1,
+      "card": null,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "size_x": 6,
+      "size_y": 2,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 7,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 6,
+      "size_x": 6,
+      "size_y": 2,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 8,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 12,
+      "size_x": 6,
+      "size_y": 2,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 9,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 18,
+      "size_x": 6,
+      "size_y": 2,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 13,
+      "parameter_mappings": []
+    },
+    {
+      "row": 5,
+      "col": 0,
+      "size_x": 12,
+      "size_y": 11,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 0,
+      "parameter_mappings": [
+        {
+          "parameter_id": "3920c5ab",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "content_type"
+            ]
+          ]
+        },
+        {
+          "parameter_id": "3d9b031b",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "date_range"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "row": 5,
+      "col": 12,
+      "size_x": 12,
+      "size_y": 6,
+      "visualization_settings": {
+        "visualization": {
+          "display": "line",
+          "columnValuesMapping": {
+            "COLUMN_2": [
+              {
+                "sourceId": "card:41",
+                "originalName": "Items",
+                "name": "COLUMN_2"
+              }
+            ],
+            "COLUMN_1": [
+              {
+                "sourceId": "card:41",
+                "originalName": "Month",
+                "name": "COLUMN_1"
+              }
+            ]
+          },
+          "settings": {
+            "series_settings": {
+              "COLUMN_2": {
+                "color": "#06B6D4"
+              }
+            },
+            "graph.show_values": true,
+            "graph.colors": [
+              "#F59E0B",
+              "#06B6D4",
+              "#8B5CF6"
+            ],
+            "graph.series_order": [],
+            "graph.metrics": [
+              "COLUMN_2"
+            ],
+            "graph.dimensions": [
+              "COLUMN_1"
+            ]
+          }
+        }
+      },
+      "tab": 1,
+      "card": 1,
+      "parameter_mappings": [
+        {
+          "parameter_id": "3920c5ab",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "content_type"
+            ]
+          ]
+        },
+        {
+          "parameter_id": "3d9b031b",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "date_range"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "row": 11,
+      "col": 12,
+      "size_x": 12,
+      "size_y": 5,
+      "visualization_settings": {},
+      "tab": 1,
+      "card": 2,
+      "parameter_mappings": [
+        {
+          "parameter_id": "3920c5ab",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "content_type"
+            ]
+          ]
+        },
+        {
+          "parameter_id": "3d9b031b",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "date_range"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "row": 0,
+      "col": 0,
+      "size_x": 24,
+      "size_y": 3,
+      "visualization_settings": {
+        "text": "# Books\nReading history and ratings only.",
+        "virtual_card": {
+          "display": "text"
+        }
+      },
+      "tab": 2,
+      "card": null,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "size_x": 6,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 2,
+      "card": 10,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 6,
+      "size_x": 6,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 2,
+      "card": 11,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 12,
+      "size_x": 6,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 2,
+      "card": 12,
+      "parameter_mappings": []
+    },
+    {
+      "row": 3,
+      "col": 18,
+      "size_x": 6,
+      "size_y": 3,
+      "visualization_settings": {},
+      "tab": 2,
+      "card": 14,
+      "parameter_mappings": []
+    },
+    {
+      "row": 6,
+      "col": 0,
+      "size_x": 24,
+      "size_y": 11,
+      "visualization_settings": {},
+      "tab": 2,
+      "card": 3,
+      "parameter_mappings": [
+        {
+          "parameter_id": "3d9b031b",
+          "target": [
+            "dimension",
+            [
+              "template-tag",
+              "date_range"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "row": 0,
+      "col": 0,
+      "size_x": 24,
+      "size_y": 30,
+      "visualization_settings": {
+        "text": "# Glossary\nWhat every metric on this dashboard actually means.\n\n## Content Pipeline\n- **Total Unwatched Candidates**: movies and TV shows in the catalog that are not in your watch history yet. Books are counted separately under Unread Books.\n- **Unwatched Movies / Unwatched TV Shows**: same, split by type.\n- **Total Catalog Size**: distinct movies and TV shows ingested, watched or not.\n- **Last Pipeline Run**: timestamp of the most recent taste profile or recommendation refresh.\n- **Raw Rows Ingested**: total rows currently stored across all 7 raw tables (TMDB discovery and details, Simkl ratings, Hardcover ratings, and Open Library books).\n\n## Watch & Ratings\n- **Titles Rated**: movies/TV titles with a personal rating on record, all-time.\n- **Avg Rating**: average personal rating across all rated movies/TV titles, all-time.\n- **Rated This Month**: same, scoped to the current month.\n- **Most Watched Genre**: the genre with the most titles in your watch history, by count, not by average rating.\n- **Your Average Rating by Genre**: average rating per genre. A genre needs at least 2 ratings to appear, so one score cannot make or break a category.\n- **Top Platforms You Watch On**: platforms ranked by how many of your watched titles are streaming there in your region. Simkl doesn't record where you watched, so this is availability, not viewing.\n- **Content Consumed Per Month**: count of titles marked consumed, by the month watched.\n\n## Books\n- **Books Rated / Avg Book Rating / Books Rated This Month**: same pattern as Watch & Ratings, scoped to books.\n- **Unread Books**: books that can still be recommended (not read, not dismissed, and not another edition of a book already read).\n- **Your Average Rating by Book Subject**: average rating per subject tag. A subject needs at least 2 ratings to appear. Generic tags such as Fiction or New York Times bestseller are left out because most books carry them.\n\n## A note on freshness\nSimkl and Hardcover ingestion run on every pipeline run, but only register a change when the underlying rating data is actually different from what is already stored. A source with no recent activity reflects no new ratings upstream, not a broken pipeline.",
+        "virtual_card": {
+          "display": "text"
+        }
+      },
+      "tab": 3,
+      "card": null,
+      "parameter_mappings": []
+    }
+  ]
+}
