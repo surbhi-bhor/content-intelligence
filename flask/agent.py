@@ -1066,6 +1066,22 @@ def _is_gibberish(question: str) -> bool:
     data; only the domain-specific words below do."""
     return not _CONTENT_KEYWORDS.search(question)
 
+def find_result(question: str, tokens: list):
+    """The SQL half of answer_question: returns (columns, rows, total_count,
+    sql) for the first candidate with rows, else the last empty one, else
+    None. Split out so eval/run_ask_eval.py can score the query result
+    without paying for the answer-writing call."""
+    empty_result = None
+    for attempt in range(MAX_SQL_ATTEMPTS):
+        sql = _generate_sql(question, attempt, tokens)
+        result = _try_execute(sql, question)
+        if result is None:
+            continue
+        if result[1]:
+            return result
+        empty_result = result
+    return empty_result
+
 def answer_question(question: str) -> dict:
     """Best-of-N: generate a SQL candidate, verify it for free by actually
     running it. A query that errors gets discarded immediately. A query that
@@ -1089,21 +1105,9 @@ def answer_question(question: str) -> dict:
             "grounded": False,
         }
     tokens = []
-    empty_result = None
-    for attempt in range(MAX_SQL_ATTEMPTS):
-        sql = _generate_sql(question, attempt, tokens)
-        result = _try_execute(sql, question)
-        if result is None:
-            continue
+    result = find_result(question, tokens)
+    if result is not None:
         columns, rows, total_count, sql = result
-        if rows:
-            answer = _generate_answer(question, columns, rows, total_count, sql, tokens)
-            kind, data = _classify_result(question, columns, rows, total_count, sql)
-            return {"answer": answer, "type": kind, "data": data, "tokens": sum(tokens), "grounded": True}
-        empty_result = (columns, rows, total_count, sql)
-
-    if empty_result is not None:
-        columns, rows, total_count, sql = empty_result
         answer = _generate_answer(question, columns, rows, total_count, sql, tokens)
         kind, data = _classify_result(question, columns, rows, total_count, sql)
         return {"answer": answer, "type": kind, "data": data, "tokens": sum(tokens), "grounded": True}

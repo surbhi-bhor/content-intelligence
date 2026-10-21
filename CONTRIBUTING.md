@@ -65,6 +65,15 @@ docker compose exec -w /opt/dbt dagster-code dbt build              # all models
 docker compose exec -w /opt/dbt dagster-code dbt source freshness   # how recent the raw data is
 ```
 
+**The `/ask` evaluation** runs the 20 questions in `flask/eval/questions.py` through the agent and compares each result with a hand-written gold query. It needs the stack and the Ollama models, and takes roughly 10 to 30 minutes on a CPU:
+
+```bash
+docker compose exec flask python eval/run_ask_eval.py                       # all 20, writes flask/eval/results.json
+docker compose exec flask python eval/run_ask_eval.py --only count_planned  # selected cases
+```
+
+When adding a case, keep the question out of the agent's worked examples, and give the gold query no `LIMIT` so it returns every correct row.
+
 **CI** (`.github/workflows/ci.yml`) runs the lint, the unit tests, and `dbt parse` on every push to `main` and on pull requests.
 
 Any job can also be started by hand from the Dagster UI at `localhost:3000`.
