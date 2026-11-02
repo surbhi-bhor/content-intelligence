@@ -85,6 +85,7 @@ Both features follow the same principle: a small local model is useful, but not 
 
 - Candidates are scored in Python from the personal rating history (average rating of matching genres and creators). No LLM generates them.
 - Candidates must be unwatched, not dismissed, rated well enough on TMDB, and available on a streaming service in the configured region.
+- Each language keeps its best candidates by that score, with popularity only breaking ties, so a strong match is never cut for being less popular.
 - Daily soaps, TV serials, and reality or talk formats are excluded. They are flagged once, in `dim_watchable.is_serial_format`, using episodes per season and vote count.
 - `llama3.2:1b` only chooses and orders 10 picks from a shortlist of top-scored candidates. Every id it returns is checked against that shortlist.
 - If the model fails, a deterministic fallback picks instead.
@@ -92,9 +93,10 @@ Both features follow the same principle: a small local model is useful, but not 
 
 **Book picks**
 
-- Open Library discovery searches the specific subjects and authors of books rated 4 stars or more.
-- Each unread book is scored in dbt (`marts.book_candidate_scores`) on two signals: the highly rated read it shares the most specific subjects with (at least two), and the average rating given to its author. Generic tags such as "Fiction" or "New York Times bestseller" are ignored.
-- Books backed by both signals rank first. Picks are limited to one per author and two per source book, and each reason names the read it is based on, for example "Like Before the Coffee Gets Cold, which you rated 10".
+- Open Library discovery searches the specific subjects of every book rated 4 stars or more, taking each book's subjects in turn so non-fiction gets searched too, and the other books by those authors. Author searches accept thinly rated books, since the reader's own ratings already vouch for the author.
+- Each unread book is scored in dbt (`marts.book_candidate_scores`) on two signals: the highest rated read it shares at least two specific subjects with, and the average rating given to its author. Generic tags such as "Fiction", "New York Times bestseller" or shelf categories like "Fiction, fantasy, general" are ignored, and a topic with its fiction variant ("Artists", "Artists, fiction") counts once.
+- Books backed by both signals rank first, then books by an author rated 4 stars or more. Picks are limited to one per author and two per source book, and each reason names the read it is based on, for example "Like Before the Coffee Gets Cold, which you rated 10".
+- Dismissing two or more books by an author, more than have been read, stops that author being recommended. It is a dbt view (`marts.dismissed_book_authors`), so it applies to the very next replacement.
 - Already read books are excluded by id and by title, so another edition or translation of a read book is not recommended.
 
 **Ask**
@@ -119,7 +121,7 @@ Both features follow the same principle: a small local model is useful, but not 
 - **Failure alerts:** every failed run is recorded in `meta.pipeline_alerts` and triggers an email. The `/health` page turns red until a later run succeeds.
 - **Backups:** a backup container runs `pg_dump` daily and keeps the last 14 copies.
 - **English-only display text:** everything shown in the app and dashboards is English. Book authors use the English spelling Open Library lists (for example Haruki Murakami rather than the Japanese script), non-English book subject tags are dropped, and any name still in another script is left blank. A dbt test fails the run if non-English script reaches a title, name, genre, platform, or subject.
-- **Unit tests and CI:** 65 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching, English author names, and the eval scoring rules). GitHub Actions runs lint, the tests, and a dbt parse on every push.
+- **Unit tests and CI:** 82 pytest tests cover the core logic (pick validation, language allocation, book ranking, API retries, the SQL safety checks and repairs, the delete guard, TMDB error handling, book matching, English author names, and the eval scoring rules). GitHub Actions runs lint and the tests, then builds the dbt project into an empty Postgres and runs every dbt test, on every push.
 
 ## Evaluation
 
@@ -253,7 +255,7 @@ dbt/
   models/marts/      11 tables: dimensions, bridges, facts, book scores
 flask/               Web app: picks page, /ask, /not-interested, /health, /usage
   templates/          base, index (picks + ask bar), health
-  eval/               20-question /ask evaluation set and runner
+  eval/               /ask evaluation sets (20 dev, 10 holdout) and runner
 metabase/            Exported Metabase dashboard (questions, tabs, layout)
 scripts/             metabase_sync.py: export or import the dashboard
 docs/                Architecture, case study, and threat model

@@ -74,7 +74,7 @@ docker compose exec flask python eval/run_ask_eval.py --only count_planned  # se
 
 When adding a case, keep the question out of the agent's worked examples, and give the gold query no `LIMIT` so it returns every correct row.
 
-**CI** (`.github/workflows/ci.yml`) runs the lint, the unit tests, and `dbt parse` on every push to `main` and on pull requests.
+**CI** (`.github/workflows/ci.yml`) runs the lint and the unit tests, then builds the dbt project into an empty Postgres service and runs every data and unit test (`dbt build`), on every push to `main` and on pull requests.
 
 Any job can also be started by hand from the Dagster UI at `localhost:3000`.
 

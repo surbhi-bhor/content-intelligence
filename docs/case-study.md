@@ -137,8 +137,8 @@ Each choice below fits this project's scale: one user, one machine, and a weekly
 
 ## Results
 
-- **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 11 marts tables, 7 meta tables.
+- **Sources and storage:** 4 source APIs, 7 raw tables, 5 staging views, 11 marts tables and 1 marts view, 7 meta tables.
 - **Data volume:** about 630 movie and TV titles in the catalogue, with roughly 120 watched titles and 29 books in the reading history.
-- **Testing:** 80 dbt tests and 57 unit tests, all passing, with lint, unit tests, and a dbt parse running in CI on every push.
+- **Testing:** 84 dbt tests, 4 dbt unit tests and 82 pytest tests, all passing, with lint, unit tests, and a full `dbt build` against an empty Postgres running in CI on every push.
 - **Orchestration:** 14 Dagster ops, 9 jobs, a weekly schedule (Fridays at noon IST), and a failure sensor with email alerts.
 - **Models:** `llama3.2:1b` for picks and `llama3.2:3b` for `/ask`.
