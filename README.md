@@ -14,7 +14,7 @@ A self-hosted data platform that turns personal movie, TV, and book history into
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 [![CI](https://github.com/surbhi-bhor/content-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/surbhi-bhor/content-intelligence/actions/workflows/ci.yml)
 
-https://github.com/user-attachments/assets/323bb640-944d-4e0c-8ff2-44223f73d84e
+https://github.com/user-attachments/assets/f78ee32e-ae49-41b1-8747-ec42e676cef8
 
 ![Picks page with movie, TV, and book recommendations, a taste profile sidebar, and the ask bar](docs/images/picks-page.png)
 
