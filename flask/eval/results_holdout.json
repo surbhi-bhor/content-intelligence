@@ -1,0 +1,109 @@
+{
+  "model": "llama3.2:3b",
+  "split": "holdout",
+  "run_at": "2026-11-02T16:59:03+0000",
+  "passed": 6,
+  "total": 10,
+  "cases": [
+    {
+      "id": "h_count_marathi_movies",
+      "question": "How many Marathi movies have I seen?",
+      "match": "count",
+      "passed": true,
+      "detail": "got 18, expected 18",
+      "sql": "SELECT COUNT(dc.content_id) FROM marts.fact_watch_history fw JOIN marts.dim_watchable dc ON dc.content_id = fw.content_id WHERE dc.content_type = 'movie' AND dc.original_language = 'mr' AND fw.consumption_status = 'consumed'",
+      "seconds": 387.8,
+      "tokens": 4141
+    },
+    {
+      "id": "h_count_watchlist_shows",
+      "question": "How many shows are on my watchlist?",
+      "match": "count",
+      "passed": true,
+      "detail": "got 1, expected 1",
+      "sql": "SELECT COUNT(*) FROM marts.fact_watch_history fw\nJOIN marts.dim_watchable dc ON dc.content_id = fw.content_id\nWHERE fw.consumption_status = 'planned' AND fw.content_type = 'tv'",
+      "seconds": 388.1,
+      "tokens": 8261
+    },
+    {
+      "id": "h_lowest_rated_tv",
+      "question": "What is my lowest rated TV show?",
+      "match": "top",
+      "passed": false,
+      "detail": "got ('History', 7.89, 9), expected one of ['Sex Education']",
+      "sql": "SELECT dg.genre_name, AVG(fw.rating) AS avg_rating, COUNT(*) AS n\nFROM marts.fact_watch_history fw\nJOIN marts.bridge_content_genre bcg ON bcg.content_id = fw.content_id\nJOIN marts.dim_genre dg ON dg.genre_id = bcg.genre_id\nWHERE fw.content_type IN ('movie', 'tv')\n  AND fw.consumption_status = 'consumed'\nGROUP BY dg.genre_name\nHAVING COUNT(*) >= 5\nORDER BY avg_rating DESC NULLS LAST\nLIMIT 1",
+      "seconds": 191.9,
+      "tokens": 4202
+    },
+    {
+      "id": "h_shortest_movie",
+      "question": "What's the shortest movie I've watched?",
+      "match": "top",
+      "passed": false,
+      "detail": "no rows returned",
+      "sql": "SELECT dc.content_id\nFROM marts.fact_watch_history fw\nJOIN marts.dim_watchable dc ON dc.content_id = fw.content_id\nWHERE fw.consumption_status = 'consumed'\n  AND dc.content_type = 'movie'\n  AND dc.runtime_mins = (SELECT MIN(runtime_mins) FROM marts.dim_watchable WHERE content_type = 'movie')\nLIMIT 1",
+      "seconds": 148.3,
+      "tokens": 4264
+    },
+    {
+      "id": "h_most_read_subject",
+      "question": "Which book subject have I read the most?",
+      "match": "top",
+      "passed": true,
+      "detail": "got ('Siva (Hindu deity)', 10.0, 3), expected one of ['Indic Mythology', 'Indus civilization', 'Siva (Hindu deity)']",
+      "sql": "SELECT dbs.subject_name, AVG(fw.rating) AS avg_rating, COUNT(*) AS n\nFROM marts.fact_reading_history fw\nJOIN marts.bridge_content_book_subject bcbs ON bcbs.content_id = fw.content_id\nJOIN marts.dim_book_subject dbs ON dbs.subject_id = bcbs.subject_id\nWHERE fw.consumption_status = 'consumed'\n  AND NOT dbs.is_generic\nGROUP BY dbs.subject_name\nHAVING COUNT(*) >= 2\nORDER BY avg_rating DESC NULLS LAST\nLIMIT 10",
+      "seconds": 61.1,
+      "tokens": 2157
+    },
+    {
+      "id": "h_top_rated_author",
+      "question": "Which author do I rate the highest?",
+      "match": "top",
+      "passed": true,
+      "detail": "got ('Chitra Banerjee Divakaruni', 9.0), expected one of ['Chitra Banerjee Divakaruni']",
+      "sql": "SELECT db.primary_creator, AVG(fw.rating) AS avg_rating FROM marts.fact_reading_history fw JOIN marts.dim_book db ON db.content_id = fw.content_id WHERE fw.consumption_status = 'consumed' GROUP BY db.primary_creator HAVING COUNT(*) >= 2\nORDER BY avg_rating DESC NULLS LAST LIMIT 1",
+      "seconds": 202.5,
+      "tokens": 4120
+    },
+    {
+      "id": "h_compare_hindi_english",
+      "question": "Compare my average rating for Hindi movies versus English movies",
+      "match": "set",
+      "passed": false,
+      "detail": "missing ['en', 'hi'], extra 2",
+      "sql": "SELECT \n  dc.content_type, \n  AVG(fw.rating) AS avg_rating,\n  COUNT(*) AS n\nFROM marts.fact_watch_history fw\nJOIN marts.dim_watchable dc ON dc.content_id = fw.content_id\nWHERE dc.content_type = 'movie' AND fw.consumption_status = 'consumed'\n  AND dc.original_language = 'hi' OR dc.original_language = 'en'\nGROUP BY dc.content_type\nORDER BY dc.content_type",
+      "seconds": 99.0,
+      "tokens": 2140
+    },
+    {
+      "id": "h_unwatched_netflix_movies",
+      "question": "Netflix movies I haven't watched",
+      "match": "subset",
+      "passed": true,
+      "detail": "0 of 19 rows not in gold",
+      "sql": "SELECT dc.title, dc.content_type\nFROM marts.dim_watchable dc\nJOIN marts.bridge_content_platform bcp ON bcp.content_id = dc.content_id\nJOIN marts.dim_platform dp ON dp.platform_id = bcp.platform_id\nLEFT JOIN marts.fact_watch_history fw ON fw.content_id = dc.content_id\nWHERE dc.content_type = 'movie' AND dp.platform_name ILIKE '%netflix%'\n  AND dc.vote_count >= 10\n  AND fw.content_id IS NULL",
+      "seconds": 223.3,
+      "tokens": 4185
+    },
+    {
+      "id": "h_recent_books",
+      "question": "Which books did I finish most recently?",
+      "match": "top",
+      "passed": true,
+      "detail": "got ('A Murder in Dehradun', datetime.datetime(2026, 11, 1, 0, 0)), expected one of ['A Murder in Dehradun']",
+      "sql": "SELECT db.title, fw.interaction_date\nFROM marts.fact_reading_history fw\nJOIN marts.dim_book db ON db.content_id = fw.content_id\nWHERE fw.consumption_status = 'consumed'\nORDER BY fw.interaction_date DESC NULLS LAST\nLIMIT 10",
+      "seconds": 94.7,
+      "tokens": 2107
+    },
+    {
+      "id": "h_current_watch_picks",
+      "question": "What movies and shows are in my picks this week?",
+      "match": "subset",
+      "passed": false,
+      "detail": "every SQL candidate failed",
+      "sql": null,
+      "seconds": 358.3,
+      "tokens": 8350
+    }
+  ]
+}

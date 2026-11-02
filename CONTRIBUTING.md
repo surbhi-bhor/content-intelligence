@@ -65,11 +65,12 @@ docker compose exec -w /opt/dbt dagster-code dbt build              # all models
 docker compose exec -w /opt/dbt dagster-code dbt source freshness   # how recent the raw data is
 ```
 
-**The `/ask` evaluation** runs the 20 questions in `flask/eval/questions.py` through the agent and compares each result with a hand-written gold query. It needs the stack and the Ollama models, and takes roughly 10 to 30 minutes on a CPU:
+**The `/ask` evaluation** runs the questions in `flask/eval/questions.py` through the agent and compares each result with a hand-written gold query: 20 dev questions, and 10 holdout questions kept out of any tuning. It needs the stack and the Ollama models, and takes roughly 30 to 60 minutes on a CPU:
 
 ```bash
-docker compose exec flask python eval/run_ask_eval.py                       # all 20, writes flask/eval/results.json
-docker compose exec flask python eval/run_ask_eval.py --only count_planned  # selected cases
+docker compose exec flask python eval/run_ask_eval.py                       # dev set, writes flask/eval/results_dev.json
+docker compose exec flask python eval/run_ask_eval.py --split holdout       # holdout set, writes results_holdout.json
+docker compose exec flask python eval/run_ask_eval.py --only count_planned  # selected cases, writes nothing
 ```
 
 When adding a case, keep the question out of the agent's worked examples, and give the gold query no `LIMIT` so it returns every correct row.

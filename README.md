@@ -123,27 +123,27 @@ Both features follow the same principle: a small local model is useful, but not 
 
 ## Evaluation
 
-[`flask/eval/questions.py`](flask/eval/questions.py) holds 20 questions for `/ask`, none of them taken from the prompt's worked examples. Each has a hand-written gold query, and [`run_ask_eval.py`](flask/eval/run_ask_eval.py) compares the rows the agent's SQL returns with the gold rows (exact count, top item with ties allowed, exact set, or every returned title inside the gold set). Only the SQL is scored, not the wording of the answer.
+[`flask/eval/questions.py`](flask/eval/questions.py) holds 30 questions for `/ask`, none of them taken from the prompt's worked examples: a dev set of 20, whose failures guided the fixes, and a holdout set of 10, written before the fixes and never used to tune them. Each has a hand-written gold query, and [`run_ask_eval.py`](flask/eval/run_ask_eval.py) compares the rows the agent's SQL returns with the gold rows (exact count, top item with ties allowed, exact set, or every returned title inside the gold set). Only the SQL is scored, not the wording of the answer.
 
-**Baseline with `llama3.2:3b` on CPU (2026-10-22): 9 of 20 passed (45%).** Full per-question output is in [`flask/eval/results.json`](flask/eval/results.json).
+**`llama3.2:3b` on CPU (2026-11-02): dev 16 of 20 (80%), up from 9; holdout 6 of 10 (60%), up from 4.** Per-question output: [`results_dev.json`](flask/eval/results_dev.json) and [`results_holdout.json`](flask/eval/results_holdout.json), with the earlier runs in the `_baseline` files.
 
-| Question type | Passed |
-| --- | --- |
-| Counts (TV, books, Hindi movies, comedies, watchlist) | 4 of 5 |
-| Rankings and single facts (top movie, genre, director, author, longest book, platform) | 1 of 7 |
-| Comparison (movies vs TV) | 0 of 1 |
-| Lists of watched or read items | 3 of 4 |
-| Discovery over unwatched titles | 1 of 2 |
-| This week's picks | 0 of 1 |
+| Question type (dev set) | Before | After |
+| --- | --- | --- |
+| Counts (TV, books, Hindi movies, comedies, watchlist) | 4 of 5 | 5 of 5 |
+| Rankings and single facts (top movie, genre, director, author, longest book, platform) | 1 of 7 | 5 of 7 |
+| Comparison (movies vs TV) | 0 of 1 | 0 of 1 |
+| Lists of watched or read items | 3 of 4 | 4 of 4 |
+| Discovery over unwatched titles | 1 of 2 | 2 of 2 |
+| This week's picks | 0 of 1 | 0 of 1 |
 
-Filtered lists and counts mostly work. Rankings are the weak spot, and the failures fall into a few repeatable patterns:
+The baseline failures fell into a few repeatable patterns, each now handled by a repair or check in `_try_execute`:
 
-- No `ORDER BY` on a ranking query, so the first row is arbitrary (most-watched and lowest-rated genre).
-- `ORDER BY rating DESC` without `NULLS LAST`, so an unrated title ranks first (highest-rated movie).
+- No `ORDER BY` on a ranking query, so the first row was arbitrary (most-watched and lowest-rated genre).
+- `ORDER BY rating DESC` without `NULLS LAST`, so an unrated title ranked first (highest-rated movie).
 - The right table but the wrong column (longest book sorted by date), or the wrong table (this week's book picks read from reading history).
 - Status confusion: "watchlist" mapped to `in_progress` instead of `planned`.
 
-Each pattern can be handled by a check or repair in `_try_execute`, like the existing ones, and the eval shows whether a change helps. Recommendation quality is not scored yet; picks are checked for validity (unwatched, available, language slots) but not for how good they are.
+Still failing on both sets: comparisons (movies vs TV, Hindi vs English), questions about this week's picks, and longest or shortest titles. The model's SQL for these is usually rejected by the checks rather than answered wrongly, so `/ask` says it couldn't answer instead of giving a wrong number. Recommendation quality is not scored yet; picks are checked for validity (unwatched, available, language slots) but not for how good they are.
 
 ## Dashboards (Metabase)
 
@@ -253,7 +253,7 @@ dbt/
   models/marts/      11 tables: dimensions, bridges, facts, book scores
 flask/               Web app: picks page, /ask, /not-interested, /health, /usage
   templates/          base, index (picks + ask bar), health
-  eval/               /ask evaluation sets (20 dev, 10 holdout) and runner
+  eval/               /ask evaluation sets (20 dev, 10 holdout), runner, and results
 metabase/            Exported Metabase dashboard (questions, tabs, layout)
 scripts/             metabase_sync.py: export or import the dashboard
 docs/                Architecture, case study, and threat model
