@@ -5,16 +5,17 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "flask", "eval"))
 
-from questions import CASES  # noqa: E402
+from questions import CASES, HOLDOUT_CASES  # noqa: E402
 from run_ask_eval import score  # noqa: E402
 
 
-def test_eval_set_has_twenty_unique_read_only_cases():
+def test_eval_sets_have_unique_read_only_cases():
     assert len(CASES) == 20
-    assert len({c["id"] for c in CASES}) == 20
-    for case in CASES:
+    assert len(HOLDOUT_CASES) == 10
+    assert len({c["id"] for c in CASES + HOLDOUT_CASES}) == 30
+    for case in CASES + HOLDOUT_CASES:
         assert case["match"] in {"count", "top", "set", "subset"}
-        assert case["gold"].strip().upper().startswith("SELECT")
+        assert "SELECT" in case["gold"].upper() and ";" not in case["gold"]
 
 
 def test_count_compares_row_totals():

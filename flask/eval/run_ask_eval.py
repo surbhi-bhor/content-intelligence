@@ -4,11 +4,12 @@ Runs inside the Flask container, which already has the database role,
 Ollama, and the agent's dependencies:
 
     docker compose exec flask python eval/run_ask_eval.py
+    docker compose exec flask python eval/run_ask_eval.py --split holdout
     docker compose exec flask python eval/run_ask_eval.py --only top_rated_movie
 
 Only the SQL half of the agent is scored (agent.find_result); the wording of
 the final answer is not. Results are printed as a table and written to
-eval/results.json.
+eval/results_<split>.json.
 """
 import argparse
 import json
@@ -20,9 +21,10 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import agent  # noqa: E402
-from questions import CASES  # noqa: E402
+from questions import CASES, HOLDOUT_CASES  # noqa: E402
 
-RESULTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
+EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
+SPLITS = {"dev": CASES, "holdout": HOLDOUT_CASES, "all": CASES + HOLDOUT_CASES}
 
 
 def _norm(value) -> str:
@@ -74,9 +76,10 @@ def score(match: str, gold: list, rows: list, total_count: int) -> tuple[bool, s
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--only", nargs="*", help="case ids to run")
     args = parser.parse_args()
-    cases = [c for c in CASES if not args.only or c["id"] in args.only]
+    cases = [c for c in SPLITS[args.split] if not args.only or c["id"] in args.only]
 
     results = []
     for case in cases:
@@ -99,9 +102,11 @@ def main():
 
     passed = sum(r["passed"] for r in results)
     print(f"\n{passed}/{len(results)} passed ({passed / len(results):.0%})")
-    with open(RESULTS_PATH, "w", encoding="utf-8") as f:
+    if args.only:
+        return  # a partial run would overwrite the full results file
+    with open(os.path.join(EVAL_DIR, f"results_{args.split}.json"), "w", encoding="utf-8") as f:
         json.dump({
-            "model": agent.OLLAMA_MODEL,
+            "model": agent.OLLAMA_MODEL, "split": args.split,
             "run_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "passed": passed, "total": len(results), "cases": results,
         }, f, indent=2, default=str)

@@ -103,6 +103,14 @@ SCHEMA_RULES = """SQL RULES:
   calendar month name ("in August") is NEVER the rolling-window pattern —
   it means EXTRACT(MONTH FROM fw.interaction_date) = <month number>, no year
   restriction unless a year is explicitly stated.
+- Status words: "watchlist"/"plan to watch"/"haven't started" means
+  consumption_status = 'planned'; "currently watching/reading" means
+  'in_progress' only.
+- "Ranking" questions (most, highest, lowest, top, longest...) MUST have an
+  ORDER BY on the ranked value. Longest/shortest: dc.runtime_mins for
+  movies/TV, db.page_count for books. Most recent: interaction_date.
+- "Picks"/"recommended for me": meta.daily_recommendations_watch (movies/TV)
+  and meta.daily_recommendations_books; both hold only the current picks.
 - Taste profile: SELECT ... FROM meta.taste_profile ORDER BY generated_at
   DESC LIMIT 1 — always the latest row.
 - Books are a separate domain, not a content_type value: marts.fact_reading_history
@@ -426,6 +434,11 @@ def _has_missing_content_type_filter(sql: str, question: str) -> bool:
     content_type filter naming it at all, reject outright rather than trust
     a count/list that silently spans all three types."""
     upper = sql.upper()
+    # "More movies or more TV shows?" names two types, and GROUP BY
+    # content_type answers it with no literal for either: one row per type.
+    named = [k for k, p in _CONTENT_TYPE_WORDS.items() if k != "book" and p.search(question)]
+    if len(named) >= 2 and re.search(r"GROUP\s+BY[^;]*CONTENT_TYPE", upper):
+        return False
     for kind, pattern in _CONTENT_TYPE_WORDS.items():
         if kind == "book":
             continue  # books have no content_type column - fact_reading_history/dim_book ARE the filter
@@ -480,7 +493,10 @@ def _has_missing_genre_filter(sql: str, question: str) -> bool:
     return False
 
 _COMPOUND_RANKING = re.compile(r"\b(most|least)\b.*\brate\w*\b", re.IGNORECASE)
-_COMPARISON_WORDS = re.compile(r"\bcompare[sd]?\b|\bcompared to\b|\bversus\b|\bvs\.?\b", re.IGNORECASE)
+_COMPARISON_WORDS = re.compile(
+    r"\bcompare[sd]?\b|\bcompared to\b|\bversus\b|\bvs\.?\b|\b(more|fewer|less)\b[^?]*\bor\b",
+    re.IGNORECASE,
+)
 _WATCHED_PHRASE = re.compile(r"\bwatched\b|\bdid i (watch|read)\b|\bhave i (watched|read)\b|\bread\b", re.IGNORECASE)
 _UNWATCHED_PHRASE = re.compile(r"haven.t|unwatched|not watched|not seen|n.t seen", re.IGNORECASE)
 
@@ -499,6 +515,8 @@ def _has_incomplete_comparison_filter(sql: str, question: str) -> bool:
     if len(matched) < 2:
         return False
     upper = sql.upper()
+    if re.search(r"GROUP\s+BY[^;]*CONTENT_TYPE", upper):
+        return False  # one row per type already covers every side
     return not all(f"'{kind.upper()}'" in upper for kind in matched)
 
 def _has_missing_consumed_filter(sql: str, question: str) -> bool:
@@ -811,6 +829,126 @@ def _repair_missing_content_type_filter(sql: str, question: str) -> str:
     insert_at = where_match.end()
     return sql[:insert_at] + " " + insertion + sql[insert_at:].lstrip()
 
+# ── Repairs and guards found by the eval set (flask/eval) ─────────
+
+_RANKING_WORDS = re.compile(
+    r"\b(most|least|highest|lowest|top|best|worst|longest|shortest|fewest)\b", re.IGNORECASE,
+)
+_ASCENDING_WORDS = re.compile(r"\b(least|lowest|worst|shortest|fewest)\b", re.IGNORECASE)
+_RATING_WORDS = re.compile(r"\brat(e|ed|es|ing|ings)\b", re.IGNORECASE)
+_LENGTH_WORDS = re.compile(r"\b(longest|shortest)\b", re.IGNORECASE)
+_WATCHLIST_WORDS = re.compile(r"\bwatch\s?list\b|\bplan(ned)? to (watch|read)\b|\bhaven.t started\b", re.IGNORECASE)
+_CURRENT_WORDS = re.compile(r"\bcurrently\b|\bstill (watching|reading)\b", re.IGNORECASE)
+_PICKS_WORDS = re.compile(r"\bpicks?\b|\brecommend(ed|ations?)\b", re.IGNORECASE)
+_FACT_ALIAS = re.compile(
+    r"\bmarts\.fact_(?:watch|reading)_history(?:\s+(?:AS\s+)?(?!(?:JOIN|WHERE|LEFT|RIGHT|FULL|INNER|CROSS|NATURAL|GROUP|ORDER|LIMIT|ON|USING)\b)(\w+))?",
+    re.IGNORECASE,
+)
+_TAIL_CLAUSE = re.compile(r"\b(GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT)\b", re.IGNORECASE)
+_AVG_EXPR = re.compile(r"\bAVG\s*\([^)]*\)", re.IGNORECASE)
+
+def _add_condition(sql: str, condition: str) -> str:
+    """AND a condition into the outer WHERE, or add a WHERE before the first
+    GROUP BY / HAVING / ORDER BY / LIMIT when there is none."""
+    where = re.search(r"\bWHERE\b", sql, re.IGNORECASE)
+    if where:
+        return f"{sql[:where.end()]} {condition} AND {sql[where.end():].lstrip()}"
+    tail = _TAIL_CLAUSE.search(sql)
+    at = tail.start() if tail else len(sql)
+    return f"{sql[:at].rstrip()} WHERE {condition} {sql[at:]}".rstrip()
+
+def _repair_missing_order_by(sql: str, question: str) -> str:
+    """Eval: 'Which genre have I watched the most?' and 'Which genre do I
+    rate the lowest?' came back with GROUP BY and HAVING but no ORDER BY, so
+    the 'top' row was whatever Postgres returned first. For a ranking
+    question with a GROUP BY and no ORDER BY, sort by the average when the
+    question is about ratings (and the query computes one), else by count.
+    A 'most X but lowest rated' question ranks by the count side, matching
+    the _COMPOUND_RANKING prompt rule."""
+    if not _RANKING_WORDS.search(question) or re.search(r"\bORDER\s+BY\b", sql, re.IGNORECASE):
+        return sql
+    if not re.search(r"\bGROUP\s+BY\b", sql, re.IGNORECASE):
+        return sql
+    avg = _AVG_EXPR.search(sql)
+    if _RATING_WORDS.search(question) and avg and not _COMPOUND_RANKING.search(question):
+        key = avg.group(0)
+        descending = not _ASCENDING_WORDS.search(question)
+    else:
+        key = "COUNT(*)"
+        descending = not re.search(r"\b(least|fewest)\b", question, re.IGNORECASE)
+    order = f"ORDER BY {key} {'DESC NULLS LAST' if descending else 'ASC'}"
+    limit = re.search(r"\bLIMIT\b", sql, re.IGNORECASE)
+    if limit:
+        return f"{sql[:limit.start()].rstrip()} {order} {sql[limit.start():]}"
+    return f"{sql.rstrip()} {order}"
+
+def _repair_desc_nulls_first(sql: str) -> str:
+    """Eval: 'What is my highest rated movie?' returned Deadpool, which has
+    no rating: Postgres sorts NULL first under DESC, so every unrated title
+    outranked the 10s. Add NULLS LAST to each DESC in the outer ORDER BY
+    (ASC already puts NULLs last)."""
+    order = None
+    for order in re.finditer(r"\bORDER\s+BY\b", sql, re.IGNORECASE):
+        pass
+    if order is None:
+        return sql
+    head, clause = sql[:order.start()], sql[order.start():]
+    return head + re.sub(r"\bDESC\b(?!\s+NULLS)", "DESC NULLS LAST", clause, flags=re.IGNORECASE)
+
+def _repair_consumed_on_unwatched(sql: str, question: str) -> str:
+    """Eval: 'TV shows on Prime that I haven't watched' wrote the LEFT JOIN
+    correctly, then filtered fw.consumption_status = 'consumed', which keeps
+    only watched titles, the opposite of the question. For an unwatched
+    question with a LEFT JOIN, the right test is the missing row."""
+    if not _UNWATCHED_PHRASE.search(question) or not re.search(r"\bLEFT\s+JOIN\b", sql, re.IGNORECASE):
+        return sql
+    if _WATCHLIST_WORDS.search(question):
+        return sql  # "watchlist I haven't started" is about planned rows, not missing ones
+    return re.sub(
+        r"\b(\w+)\.consumption_status\s*=\s*'consumed'", r"\1.content_id IS NULL", sql, flags=re.IGNORECASE,
+    )
+
+def _repair_status_words(sql: str, question: str) -> str:
+    """Eval: 'titles on my watchlist that I haven't started' filtered
+    'in_progress' (37 rows instead of 2), and 'TV shows I'm currently
+    watching' used IN ('in_progress', 'planned'). Map the status words in
+    the question onto the one status value they mean."""
+    status = r"(\b\w+\.)?consumption_status\s*(=\s*'[a-z_]+'|IN\s*\([^)]*\))"
+    if _WATCHLIST_WORDS.search(question):
+        return re.sub(status, lambda m: f"{m.group(1) or ''}consumption_status = 'planned'", sql, flags=re.IGNORECASE)
+    if _CURRENT_WORDS.search(question):
+        return re.sub(status, lambda m: f"{m.group(1) or ''}consumption_status = 'in_progress'", sql, flags=re.IGNORECASE)
+    return sql
+
+def _repair_missing_consumed_filter(sql: str, question: str) -> str:
+    """Eval: 'Which author have I read the most books by?' failed on both
+    attempts because neither had a consumption_status filter, which the
+    reject guard below then (correctly) threw out. The missing condition is
+    always the same one, so add it instead of discarding a usable query."""
+    if not _WATCHED_PHRASE.search(question) or _UNWATCHED_PHRASE.search(question):
+        return sql
+    if "CONSUMPTION_STATUS" in sql.upper():
+        return sql
+    fact = _FACT_ALIAS.search(sql)
+    if not fact:
+        return sql
+    qualifier = fact.group(1) or fact.group(0).split(".")[1]
+    return _add_condition(sql, f"{qualifier}.consumption_status = 'consumed'")
+
+def _has_wrong_length_column(sql: str, question: str) -> bool:
+    """Eval: 'What is the longest book I've read?' sorted by
+    interaction_date. Longest/shortest can only mean runtime or page count."""
+    if not _LENGTH_WORDS.search(question):
+        return False
+    upper = sql.upper()
+    return "RUNTIME_MINS" not in upper and "PAGE_COUNT" not in upper
+
+def _has_missing_picks_table(sql: str, question: str) -> bool:
+    """Eval: 'What books are recommended for me this week?' read books
+    finished in the last 7 days from fact_reading_history. Questions about
+    picks are only answerable from the daily_recommendations tables."""
+    return bool(_PICKS_WORDS.search(question)) and "DAILY_RECOMMENDATIONS" not in sql.upper()
+
 def _try_execute(sql: str, question: str):
     """Free verifier - costs nothing to try against local Postgres, unlike a
     billed warehouse. Returns (columns, rows, total_count) on success, None on
@@ -825,6 +963,17 @@ def _try_execute(sql: str, question: str):
     sql = _repair_missing_generic_subject_filter(sql)
     sql = _repair_missing_content_type_filter(sql, question)
     sql = _repair_unrequested_language_filter(sql, question)
+    sql = _repair_consumed_on_unwatched(sql, question)
+    sql = _repair_status_words(sql, question)
+    sql = _repair_missing_consumed_filter(sql, question)
+    sql = _repair_missing_order_by(sql, question)
+    sql = _repair_desc_nulls_first(sql)
+    if _has_wrong_length_column(sql, question):
+        log.info("[ask] candidate SQL failed, discarding: longest/shortest question but SQL never uses runtime_mins or page_count")
+        return None
+    if _has_missing_picks_table(sql, question):
+        log.info("[ask] candidate SQL failed, discarding: question is about picks but SQL never reads the daily_recommendations tables")
+        return None
     if _has_missing_platform_join(sql):
         log.info("[ask] candidate SQL failed, discarding: platform_name referenced but dim_platform join missing (repair could not fix)")
         return None

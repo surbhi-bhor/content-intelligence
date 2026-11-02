@@ -1,4 +1,9 @@
-"""Evaluation set for /ask: 20 questions, each with a hand-written gold query.
+"""Evaluation set for /ask, each question with a hand-written gold query.
+
+CASES (20) is the development set: agent fixes were made by looking at its
+failures. HOLDOUT_CASES (10) were written before those fixes and never used
+to tune the agent, so they show whether a fix generalises rather than just
+passing the questions it was written against.
 
 None of these questions appear in the agent's worked examples (agent.py
 WORKED_EXAMPLE), so a pass means the model generalised rather than copied.
@@ -240,8 +245,123 @@ CASES = [
         "question": "What books are recommended for me this week?",
         "match": "subset",
         "gold": """
+            -- The table holds only the current picks (replaced picks are deleted).
             SELECT title FROM meta.daily_recommendations_books
-            WHERE generated_at = (SELECT MAX(generated_at) FROM meta.daily_recommendations_books)
+        """,
+    },
+]
+
+HOLDOUT_CASES = [
+    {
+        "id": "h_count_marathi_movies",
+        "question": "How many Marathi movies have I seen?",
+        "match": "count",
+        "gold": """
+            SELECT fw.content_id FROM marts.fact_watch_history fw
+            JOIN marts.dim_watchable dc ON dc.content_id = fw.content_id
+            WHERE fw.content_type = 'movie' AND fw.consumption_status = 'consumed'
+              AND dc.original_language = 'mr'
+        """,
+    },
+    {
+        "id": "h_count_watchlist_shows",
+        "question": "How many shows are on my watchlist?",
+        "match": "count",
+        "gold": """
+            SELECT content_id FROM marts.fact_watch_history
+            WHERE content_type = 'tv' AND consumption_status = 'planned'
+        """,
+    },
+    {
+        "id": "h_lowest_rated_tv",
+        "question": "What is my lowest rated TV show?",
+        "match": "top",
+        "gold": """
+            SELECT dc.title, fw.rating FROM marts.fact_watch_history fw
+            JOIN marts.dim_watchable dc ON dc.content_id = fw.content_id
+            WHERE fw.content_type = 'tv' AND fw.consumption_status = 'consumed'
+              AND fw.rating IS NOT NULL
+            ORDER BY fw.rating ASC
+        """,
+    },
+    {
+        "id": "h_shortest_movie",
+        "question": "What's the shortest movie I've watched?",
+        "match": "top",
+        "gold": """
+            SELECT dc.title, dc.runtime_mins FROM marts.fact_watch_history fw
+            JOIN marts.dim_watchable dc ON dc.content_id = fw.content_id
+            WHERE fw.content_type = 'movie' AND fw.consumption_status = 'consumed'
+              AND dc.runtime_mins IS NOT NULL
+            ORDER BY dc.runtime_mins ASC
+        """,
+    },
+    {
+        "id": "h_most_read_subject",
+        "question": "Which book subject have I read the most?",
+        "match": "top",
+        "gold": """
+            SELECT dbs.subject_name, COUNT(*) FROM marts.fact_reading_history fr
+            JOIN marts.bridge_content_book_subject b ON b.content_id = fr.content_id
+            JOIN marts.dim_book_subject dbs ON dbs.subject_id = b.subject_id
+            WHERE fr.consumption_status = 'consumed' AND NOT dbs.is_generic
+            GROUP BY dbs.subject_name ORDER BY COUNT(*) DESC
+        """,
+    },
+    {
+        "id": "h_top_rated_author",
+        "question": "Which author do I rate the highest?",
+        "match": "top",
+        "gold": """
+            SELECT db.primary_creator, ROUND(AVG(fr.rating)::numeric, 2) FROM marts.fact_reading_history fr
+            JOIN marts.dim_book db ON db.content_id = fr.content_id
+            WHERE fr.consumption_status = 'consumed' AND db.primary_creator IS NOT NULL
+            GROUP BY db.primary_creator HAVING COUNT(*) >= 2 ORDER BY AVG(fr.rating) DESC
+        """,
+    },
+    {
+        "id": "h_compare_hindi_english",
+        "question": "Compare my average rating for Hindi movies versus English movies",
+        "match": "set",
+        "gold": """
+            SELECT dc.original_language FROM marts.fact_watch_history fw
+            JOIN marts.dim_watchable dc ON dc.content_id = fw.content_id
+            WHERE fw.content_type = 'movie' AND fw.consumption_status = 'consumed'
+              AND dc.original_language IN ('hi', 'en')
+            GROUP BY dc.original_language
+        """,
+    },
+    {
+        "id": "h_unwatched_netflix_movies",
+        "question": "Netflix movies I haven't watched",
+        "match": "subset",
+        "gold": """
+            SELECT dc.title FROM marts.dim_watchable dc
+            JOIN marts.bridge_content_platform bcp ON bcp.content_id = dc.content_id
+            JOIN marts.dim_platform dp ON dp.platform_id = bcp.platform_id
+            LEFT JOIN marts.fact_watch_history fw ON fw.content_id = dc.content_id
+            WHERE dc.content_type = 'movie' AND dp.platform_name ILIKE '%netflix%'
+              AND fw.content_id IS NULL
+        """,
+    },
+    {
+        "id": "h_recent_books",
+        "question": "Which books did I finish most recently?",
+        "match": "top",
+        "gold": """
+            SELECT db.title, fr.interaction_date FROM marts.fact_reading_history fr
+            JOIN marts.dim_book db ON db.content_id = fr.content_id
+            WHERE fr.consumption_status = 'consumed' AND fr.interaction_date IS NOT NULL
+            ORDER BY fr.interaction_date DESC
+        """,
+    },
+    {
+        "id": "h_current_watch_picks",
+        "question": "What movies and shows are in my picks this week?",
+        "match": "subset",
+        "gold": """
+            -- The table holds only the current picks (replaced picks are deleted).
+            SELECT title FROM meta.daily_recommendations_watch
         """,
     },
 ]

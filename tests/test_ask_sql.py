@@ -102,3 +102,103 @@ def test_count_column_label_depends_on_domain():
 def test_gibberish_is_rejected_before_any_sql():
     assert agent._is_gibberish("asdkjaslkd qwpoeiqwe")
     assert not agent._is_gibberish("what is my highest rated genre?")
+
+
+# ── Repairs and guards found by the eval set ─────────────────────
+# Each SQL string below is what llama3.2:3b actually wrote during an eval run.
+
+GENRE_NO_ORDER = (
+    "SELECT dg.genre_name, AVG(fw.rating) AS avg_rating, COUNT(*) AS n FROM marts.fact_watch_history fw "
+    "JOIN marts.bridge_content_genre bcg ON bcg.content_id = fw.content_id "
+    "JOIN marts.dim_genre dg ON dg.genre_id = bcg.genre_id "
+    "WHERE fw.consumption_status = 'consumed' GROUP BY dg.genre_name HAVING COUNT(*) >= 5"
+)
+
+
+def test_ranking_by_rating_gets_sorted_on_the_average():
+    fixed = agent._repair_missing_order_by(GENRE_NO_ORDER, "Which genre do I rate the lowest?")
+    assert fixed.endswith("ORDER BY AVG(fw.rating) ASC")
+
+
+def test_ranking_by_volume_gets_sorted_on_the_count():
+    fixed = agent._repair_missing_order_by(GENRE_NO_ORDER, "Which genre have I watched the most?")
+    assert fixed.endswith("ORDER BY COUNT(*) DESC NULLS LAST")
+
+
+def test_order_by_repair_keeps_limit_last_and_skips_non_rankings():
+    sql = GENRE_NO_ORDER + " LIMIT 10"
+    assert agent._repair_missing_order_by(sql, "Which genre have I watched the most?").endswith(
+        "ORDER BY COUNT(*) DESC NULLS LAST LIMIT 10"
+    )
+    assert agent._repair_missing_order_by(sql, "Show my genres") == sql
+
+
+def test_desc_sort_puts_unrated_titles_last():
+    sql = "SELECT dc.title, fw.rating FROM marts.fact_watch_history fw ORDER BY fw.rating DESC LIMIT 10"
+    assert "ORDER BY fw.rating DESC NULLS LAST LIMIT 10" in agent._repair_desc_nulls_first(sql)
+    already = "SELECT 1 ORDER BY x DESC NULLS LAST"
+    assert agent._repair_desc_nulls_first(already) == already
+
+
+def test_unwatched_question_swaps_consumed_filter_for_missing_row():
+    sql = (
+        "SELECT dc.title FROM marts.dim_watchable dc "
+        "LEFT JOIN marts.fact_watch_history fw ON fw.content_id = dc.content_id "
+        "WHERE dp.platform_name ILIKE '%prime%' AND fw.consumption_status = 'consumed'"
+    )
+    fixed = agent._repair_consumed_on_unwatched(sql, "TV shows on Prime that I haven't watched")
+    assert "fw.content_id IS NULL" in fixed and "'consumed'" not in fixed
+
+
+@pytest.mark.parametrize("question, sql, expected", [
+    ("How many titles are on my watchlist that I haven't started?",
+     "SELECT COUNT(fw.content_id) FROM marts.fact_watch_history fw WHERE fw.consumption_status = 'in_progress'",
+     "fw.consumption_status = 'planned'"),
+    ("Which TV shows am I currently watching?",
+     "SELECT dc.title FROM marts.fact_watch_history fw WHERE fw.consumption_status IN ('in_progress', 'planned')",
+     "fw.consumption_status = 'in_progress'"),
+])
+def test_status_words_map_to_one_status(question, sql, expected):
+    assert expected in agent._repair_status_words(sql, question)
+
+
+def test_watchlist_question_is_not_treated_as_unwatched():
+    sql = (
+        "SELECT dc.title FROM marts.dim_watchable dc "
+        "LEFT JOIN marts.fact_watch_history fw ON fw.content_id = dc.content_id "
+        "WHERE fw.consumption_status = 'consumed'"
+    )
+    question = "What's on my watchlist that I haven't started?"
+    assert agent._repair_consumed_on_unwatched(sql, question) == sql
+
+
+@pytest.mark.parametrize("sql, expected", [
+    ("SELECT db.primary_creator, COUNT(*) FROM marts.fact_reading_history fr "
+     "JOIN marts.dim_book db ON db.content_id = fr.content_id GROUP BY db.primary_creator",
+     "JOIN marts.dim_book db ON db.content_id = fr.content_id WHERE fr.consumption_status = 'consumed' GROUP BY"),
+    ("SELECT db.title FROM marts.fact_reading_history fr JOIN marts.dim_book db "
+     "ON db.content_id = fr.content_id WHERE fr.rating > 8",
+     "WHERE fr.consumption_status = 'consumed' AND fr.rating > 8"),
+    ("SELECT title FROM marts.fact_reading_history JOIN marts.dim_book USING (content_id)",
+     "WHERE fact_reading_history.consumption_status = 'consumed'"),
+])
+def test_missing_consumed_filter_is_added(sql, expected):
+    assert expected in agent._repair_missing_consumed_filter(sql, "Which author have I read the most books by?")
+
+
+def test_group_by_content_type_answers_a_two_type_comparison():
+    sql = (
+        "SELECT fw.content_type, COUNT(*) FROM marts.fact_watch_history fw "
+        "WHERE fw.consumption_status = 'consumed' GROUP BY fw.content_type"
+    )
+    question = "Have I watched more movies or more TV shows?"
+    assert not agent._has_missing_content_type_filter(sql, question)
+    assert not agent._has_incomplete_comparison_filter(sql, question)
+
+
+def test_length_and_picks_questions_need_the_right_column_and_table():
+    by_date = "SELECT db.title FROM marts.fact_reading_history fw JOIN marts.dim_book db USING (content_id) ORDER BY fw.interaction_date DESC"
+    assert agent._has_wrong_length_column(by_date, "What is the longest book I've read?")
+    assert not agent._has_wrong_length_column(by_date.replace("fw.interaction_date", "db.page_count"), "longest book?")
+    assert agent._has_missing_picks_table(by_date, "What books are recommended for me this week?")
+    assert not agent._has_missing_picks_table("SELECT title FROM meta.daily_recommendations_books", "my book picks")
