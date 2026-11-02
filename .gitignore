@@ -7,8 +7,6 @@ dbt/dbt_packages/
 *.egg-info/
 .venv/
 notes/
-ENHANCEMENTS.md
-.hallmark/
 docs/serve.log
 dbt/logs/
 docs/catalog.json
@@ -17,8 +15,8 @@ docs/manifest.json
 docs/run_results.json
 .vscode/
 *.stackdump
-design.md
 backups/
 dbt/.user.yml
 .pytest_cache/
 .ruff_cache/
+brag-output*/

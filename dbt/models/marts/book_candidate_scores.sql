@@ -1,9 +1,9 @@
 -- Every unread book scored against the reader's own history: the book
 -- equivalent of the genre and creator signals movie picks use. Two signals:
 --
---   similar book: the highly rated read (8+ out of 10) that shares the most
---                 specific subjects with the candidate. Needs at least two
---                 shared subjects; one shared tag ("Business") is too weak.
+--   similar book: the highest rated read (8+ out of 10) sharing at least two
+--                 specific subjects with the candidate, ties broken by most
+--                 shared; one shared tag ("Business") is too weak.
 --   author:       the reader's average rating of this author's books.
 --
 -- predicted_score is the mean of whichever signals exist, the same rule as
@@ -75,13 +75,14 @@ overlap as (
         ls.content_id as liked_content_id,
         ls.title as liked_title,
         ls.rating as liked_rating,
-        count(*) as shared_count,
+        -- "Artists" and "Artists, fiction" are one topic, not two shared subjects.
+        count(distinct regexp_replace(lower(ls.subject_name), ', fiction$', '')) as shared_count,
         array_agg(ls.subject_name order by ls.subject_name) as shared_subjects
     from candidates c
     join {{ ref('bridge_content_book_subject') }} bcs on bcs.content_id = c.content_id
     join liked_subjects ls on ls.subject_id = bcs.subject_id
     group by c.content_id, ls.content_id, ls.title, ls.rating
-    having count(*) >= {{ min_shared_subjects }}
+    having count(distinct regexp_replace(lower(ls.subject_name), ', fiction$', '')) >= {{ min_shared_subjects }}
 
 ),
 
@@ -89,7 +90,9 @@ best_match as (
 
     select distinct on (content_id) *
     from overlap
-    order by content_id, shared_count desc, liked_rating desc, liked_title
+    -- Rating first: Maidens should be "like The Silent Patient" (rated 10),
+    -- not "like Never Lie" (rated 8) just because Never Lie shares one more tag.
+    order by content_id, liked_rating desc, shared_count desc, liked_title
 
 ),
 

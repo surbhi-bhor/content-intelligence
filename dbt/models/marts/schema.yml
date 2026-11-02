@@ -296,6 +296,23 @@ models:
                 to: ref('dim_book_subject')
                 field: subject_id
 
+  - name: dismissed_book_authors
+    description: >
+      Authors to stop recommending: at least two of their books dismissed
+      with Not Interested, and more dismissed than read. A view, so a
+      dismissal in Flask takes effect on the very next replacement. Read by
+      the weekly book picks and the Flask replacement.
+    columns:
+      - name: author_key
+        description: "lower(trim(primary_creator)), the same key book_candidate_scores readers compare against."
+        tests:
+          - unique
+          - not_null
+      - name: dismissed_count
+        description: "Dismissed books by this author."
+      - name: read_count
+        description: "Books by this author in the reading history."
+
   - name: book_candidate_scores
     description: >
       Every unread book scored against the reader's history, the book
@@ -313,7 +330,7 @@ models:
                 to: ref('dim_book')
                 field: content_id
       - name: similar_to_content_id
-        description: "The highly rated read (8+ out of 10) sharing the most specific subjects with this book, when at least two are shared."
+        description: "The highest rated read (8+ out of 10) sharing at least two specific subjects with this book; ties go to the most shared."
         tests:
           - relationships:
               arguments:

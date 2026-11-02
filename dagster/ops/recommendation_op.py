@@ -98,7 +98,13 @@ _MIN_VOTE_COUNT_REGIONAL = 3
 _MIN_VOTE_AVERAGE_DEFAULT = 7
 _MIN_VOTE_AVERAGE_REGIONAL = 5.5
 
-def get_candidates(cur, genre_names, languages, limit=80):
+def get_candidates(cur, genre_avg, creator_avg, languages, limit=80):
+    """Unwatched, available titles per preferred language, keeping the
+    best `limit // len(languages)` per language by taste score, popularity
+    only as the tiebreak. Cutting by popularity in SQL first meant English
+    (229 unwatched) only ever offered its 26 most popular titles, so a
+    strong taste match outside that set was never considered."""
+    genre_names = list(genre_avg)
     per_lang_limit = max(1, limit // len(languages)) if languages else limit
     candidates = []
     seen_ids = set()
@@ -113,7 +119,7 @@ def get_candidates(cur, genre_names, languages, limit=80):
         # g.genre_name directly would only drop the one excluded genre link,
         # not the title itself when it also carries a genre the user wants.
         excluded_genre_sql = "AND NOT EXISTS (SELECT 1 FROM marts.bridge_content_genre ebcg JOIN marts.dim_genre eg ON eg.genre_id = ebcg.genre_id WHERE ebcg.content_id = dc.content_id AND eg.genre_name = ANY(%s))" if excluded_genres else ""
-        params = [lang, min_vote_count, min_vote_average] + ([genre_names] if genre_names else []) + ([excluded_genres] if excluded_genres else []) + [per_lang_limit]
+        params = [lang, min_vote_count, min_vote_average] + ([genre_names] if genre_names else []) + ([excluded_genres] if excluded_genres else [])
 
         cur.execute(f"""
             SELECT
@@ -138,15 +144,18 @@ def get_candidates(cur, genre_names, languages, limit=80):
               AND NOT dc.is_serial_format
               {genre_filter_sql}
               {excluded_genre_sql}
-            GROUP BY dc.content_id, dc.title, dc.content_type, dc.primary_creator, dc.popularity, dc.vote_average
-            ORDER BY dc.popularity DESC NULLS LAST
-            LIMIT %s;
+            GROUP BY dc.content_id, dc.title, dc.content_type, dc.primary_creator, dc.popularity, dc.vote_average;
         """, params)
 
-        for cid, title, ctype, creator, popularity, vote_average, genres in cur.fetchall():
-            if cid not in seen_ids:
-                seen_ids.add(cid)
-                candidates.append((cid, title, ctype, creator, lang, genres or [], popularity or 0, vote_average or 0))
+        lang_rows = [
+            (cid, title, ctype, creator, lang, genres or [], popularity or 0, vote_average or 0)
+            for cid, title, ctype, creator, popularity, vote_average, genres in cur.fetchall()
+            if cid not in seen_ids
+        ]
+        lang_rows.sort(key=lambda c: (compute_predicted_score(c, genre_avg, creator_avg) or 0, c[6]), reverse=True)
+        for c in lang_rows[:per_lang_limit]:
+            seen_ids.add(c[0])
+            candidates.append(c)
 
     return candidates
 
@@ -608,28 +617,36 @@ def get_book_candidates(cur) -> list:
     """Every unread, not-dismissed book with its scores from
     marts.book_candidate_scores, where dbt computes the two signals (the
     most similar highly rated read, and the reader's average for the
-    author). Flask's replacement for a dismissed book reads the same model,
-    so both rank books the same way."""
+    author), minus authors in marts.dismissed_book_authors. Flask's
+    replacement for a dismissed book reads the same model, so both rank
+    books the same way."""
     cur.execute("""
         SELECT content_id, title, primary_creator, predicted_score, signal_count,
                similar_to_content_id, similar_to_title, similar_to_rating,
                shared_subject_count, shared_subjects, author_avg_rating,
                author_read_count, vote_count
         FROM marts.book_candidate_scores
-        WHERE content_id NOT IN (SELECT content_id FROM meta.not_interested);
+        WHERE content_id NOT IN (SELECT content_id FROM meta.not_interested)
+          AND coalesce(lower(trim(primary_creator)), '') NOT IN (SELECT author_key FROM marts.dismissed_book_authors);
     """)
     columns = [d[0] for d in cur.description]
     return [dict(zip(columns, row)) for row in cur.fetchall()]
 
+LIKED_AUTHOR_AVG = 8  # out of 10, i.e. 4+ stars
+
 def book_rank_key(candidate) -> tuple:
     """Higher sorts first. A book backed by both signals with a good score
-    leads, then the predicted score, then how strong the subject overlap is,
-    then Open Library popularity as the last tiebreak. A book with no signal
-    keeps a place at the back, ordered by popularity, so a thin history
-    still yields picks."""
+    leads; then a book by an author the reader rates 4+ stars, since that
+    is firmer evidence than two shared tags (a hockey romance once scored
+    10 for sharing "family, love" with Before the Coffee Gets Cold); then
+    the predicted score, how strong the subject overlap is, and Open
+    Library popularity as the last tiebreak. A book with no signal keeps a
+    place at the back, ordered by popularity, so a thin history still
+    yields picks. Flask's find_book_replacement_pick orders the same way."""
     score = float(candidate["predicted_score"]) if candidate["predicted_score"] is not None else 0.0
     strong = candidate["signal_count"] == 2 and score >= GOOD_PREDICTED_SCORE
-    return (strong, score, candidate["shared_subject_count"] or 0, candidate["vote_count"] or 0)
+    liked_author = float(candidate["author_avg_rating"] or 0) >= LIKED_AUTHOR_AVG
+    return (strong, liked_author, score, candidate["shared_subject_count"] or 0, candidate["vote_count"] or 0)
 
 def select_book_picks(candidates, count=BOOK_PICKS_COUNT) -> list:
     """Best-ranked books, with variety: one book per author and at most two
@@ -670,8 +687,9 @@ def build_book_reason(candidate) -> str:
     if similar:
         return f"Like {similar}, which you rated {_fmt_rating(candidate['similar_to_rating'])}: {shared}."
     if author_avg is not None:
-        books = "book" if candidate["author_read_count"] == 1 else "books"
-        return f"By {creator}: you rated {candidate['author_read_count']} of their {books} {_fmt_rating(author_avg)} avg."
+        if candidate["author_read_count"] == 1:
+            return f"By {creator}: you rated their other book {_fmt_rating(author_avg)}."
+        return f"By {creator}: you rated {candidate['author_read_count']} of their books {_fmt_rating(author_avg)} avg."
     if creator:
         return f"By {creator}, a well-read title worth discovering."
     return "A well-read title worth discovering."
@@ -714,7 +732,7 @@ def generate_recommendations(context, start=None):
         return 0
 
     languages = get_preferred_languages(cur)
-    candidates = get_candidates(cur, genre_names, languages)
+    candidates = get_candidates(cur, genre_avg, creator_avg, languages)
     if not candidates:
         log.warning("No unwatched candidates found.")
         cur.close()

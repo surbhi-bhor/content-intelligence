@@ -267,20 +267,42 @@ def english_title(doc: dict) -> Optional[str]:
 
 DISCOVERY_LIKED_MIN_RATING = 8  # out of 10, i.e. 4+ stars on Hardcover
 
-def get_top_read_subjects(cur, limit=8) -> list:
+def get_top_read_subjects(cur, limit=12) -> list:
     """Specific subjects (never generic tags like 'Fiction') of the books
-    rated 8+ out of 10, most common first, so discovery searches for books
-    like the ones actually loved. meta.taste_profile's top_genres_read
-    needs 5+ books per subject, which a few dozen books rarely reach,
-    leaving only generic tags to search."""
+    rated 8+ out of 10, so discovery searches for books like the ones
+    actually loved. meta.taste_profile's top_genres_read needs 5+ books per
+    subject, which a few dozen books rarely reach.
+
+    Taken in turns: each loved book's most shared subject first, then each
+    one's second, and so on. A plain most-common-first list spent every
+    search on the four fiction books that share tags, so Atomic Habits and
+    Man's Search for Meaning never seeded a search. "Artists" and
+    "Artists, fiction" count as one subject, as in book_candidate_scores."""
     cur.execute("""
-        SELECT s.subject_name
-        FROM marts.fact_reading_history f
-        JOIN marts.bridge_content_book_subject b ON b.content_id = f.content_id
-        JOIN marts.dim_book_subject s ON s.subject_id = b.subject_id
-        WHERE f.has_rating AND f.rating >= %s AND NOT s.is_generic
-        GROUP BY s.subject_name
-        ORDER BY count(*) DESC, avg(f.rating) DESC, s.subject_name
+        WITH liked AS (
+            SELECT DISTINCT f.content_id, f.rating, s.subject_name,
+                   regexp_replace(lower(s.subject_name), ', fiction$', '') AS subject_key
+            FROM marts.fact_reading_history f
+            JOIN marts.bridge_content_book_subject b ON b.content_id = f.content_id
+            JOIN marts.dim_book_subject s ON s.subject_id = b.subject_id
+            WHERE f.has_rating AND f.rating >= %s AND NOT s.is_generic
+        ),
+        freq AS (
+            SELECT subject_key, count(DISTINCT content_id) AS n, avg(rating) AS avg_rating,
+                   min(subject_name) AS subject_name
+            FROM liked GROUP BY subject_key
+        ),
+        per_book AS (
+            SELECT l.content_id, fq.subject_key,
+                   row_number() OVER (PARTITION BY l.content_id
+                                      ORDER BY fq.n DESC, fq.subject_key) AS turn
+            FROM (SELECT DISTINCT content_id, subject_key FROM liked) l
+            JOIN freq fq ON fq.subject_key = l.subject_key
+        )
+        SELECT fq.subject_name
+        FROM per_book pb JOIN freq fq ON fq.subject_key = pb.subject_key
+        GROUP BY fq.subject_key, fq.subject_name, fq.n, fq.avg_rating
+        ORDER BY min(pb.turn), fq.n DESC, fq.avg_rating DESC, fq.subject_key
         LIMIT %s;
     """, (DISCOVERY_LIKED_MIN_RATING, limit))
     return [r[0] for r in cur.fetchall()]
@@ -335,6 +357,11 @@ def fetch_author_works(author_name: str, limit: int = 20) -> list:
     return r.json().get("docs", [])
 
 DISCOVERY_MIN_RATINGS_COUNT = 5
+# Author searches only cover authors the reader already rated 8+, so the
+# reader's own ratings are the quality check. Open Library ratings are thin
+# for Indian authors: Amish Tripathi's War of Lanka, Raavan and Legend of
+# Suheldev have 2 each and were never discovered under the bar of 5.
+DISCOVERY_MIN_RATINGS_COUNT_AUTHOR = 1
 
 def _insert_discovered_book(cur, ol_key, title, author, first_publish_year,
                              subjects, ratings_average, ratings_count,
@@ -370,7 +397,8 @@ def _insert_discovered_book(cur, ol_key, title, author, first_publish_year,
     ))
     return bool(cur.rowcount)
 
-def _process_discovery_docs(cur, docs, known_keys, run_id, fallback_subjects=None) -> tuple:
+def _process_discovery_docs(cur, docs, known_keys, run_id, fallback_subjects=None,
+                            min_ratings_count=DISCOVERY_MIN_RATINGS_COUNT) -> tuple:
     """Shared by both discovery paths (subject-search and author-search now
     return the same search.json doc shape). English-only first (this reader
     only reads English), then a quality bar: real
@@ -388,7 +416,7 @@ def _process_discovery_docs(cur, docs, known_keys, run_id, fallback_subjects=Non
         ratings_count = doc.get("ratings_count")
         edition_count = doc.get("edition_count") or 0
         if ratings_count is not None:
-            if ratings_count < DISCOVERY_MIN_RATINGS_COUNT:
+            if ratings_count < min_ratings_count:
                 skipped += 1
                 continue
         elif edition_count < DISCOVERY_MIN_EDITION_COUNT:
@@ -488,7 +516,9 @@ def discover_openlibrary_books(context, start=None):
             log.warning(f"OpenLibrary author search failed for '{author_name}': {e}")
             continue
         total_fetched += len(docs)
-        d_inserted, d_skipped = _process_discovery_docs(cur, docs, known_keys, run_id)
+        d_inserted, d_skipped = _process_discovery_docs(
+            cur, docs, known_keys, run_id, min_ratings_count=DISCOVERY_MIN_RATINGS_COUNT_AUTHOR,
+        )
         inserted += d_inserted
         skipped += d_skipped
 

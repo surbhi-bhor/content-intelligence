@@ -176,3 +176,15 @@ def test_non_english_discovered_authors_are_replaced(monkeypatch):
     assert openlib_op.fix_non_english_authors(cursor, "run-1", log) == 1
     assert looked_up == ["key:/works/OL1W"]                  # the English name was left alone
     assert any(sql.startswith("UPDATE raw.raw_books SET author") for sql in cursor.executed)
+
+
+def test_author_discovery_accepts_thinly_rated_books():
+    # War of Lanka has 2 Open Library ratings: too few for a subject search,
+    # enough when the reader already rates the author 8+.
+    doc = {"key": "/works/OL1W", "title": "War of Lanka", "language": ["eng"],
+           "author_name": ["Amish Tripathi"], "ratings_count": 2, "edition_count": 2}
+    assert openlib_op._process_discovery_docs(FakeCursor(), [doc], set(), "run-1") == (0, 1)
+    assert openlib_op._process_discovery_docs(
+        FakeCursor(), [doc], set(), "run-1",
+        min_ratings_count=openlib_op.DISCOVERY_MIN_RATINGS_COUNT_AUTHOR,
+    ) == (1, 0)

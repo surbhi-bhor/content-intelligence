@@ -41,6 +41,10 @@ select
             'english fiction (fictional works by one author)'
         )
         or lower(subject_name) ~ '^(collection:|nyt:|reading level|award|accessible book|protected daisy|in library|lending library|large type|popular print|open library)'
+        -- BISAC shelf categories ("Fiction, fantasy, general"): broad enough
+        -- that a 19th-century fairy tale and Discworld both "matched" The
+        -- Midnight Library, and the plain genre tag ("Fantasy") is kept anyway.
+        or lower(subject_name) ~ ', general$'
     ) as is_generic
 
 from cleaned

@@ -1,0 +1,131 @@
+version: 2
+
+# Book scoring rules, each pinned to a case that once produced a bad pick.
+# Run by `dbt build` (CI and the pipeline); upstream relations must exist,
+# so CI builds the project into an empty Postgres first.
+
+unit_tests:
+  - name: bisac_shelf_categories_are_generic
+    description: >
+      "Fiction, fantasy, general" matched Discworld and a Victorian fairy tale
+      to The Midnight Library. Shelf categories ending in ", general" carry no
+      signal; the plain genre tag next to them does.
+    model: dim_book_subject
+    given:
+      - input: ref('stg_books')
+        rows:
+          - {subjects: '["Fiction, fantasy, general", "Fantasy", "Fiction"]'}
+    expect:
+      rows:
+        - {subject_name: "Fantasy", is_generic: false}
+        - {subject_name: "Fiction", is_generic: true}
+        - {subject_name: "Fiction, fantasy, general", is_generic: true}
+
+  - name: topic_and_its_fiction_variant_count_once
+    description: >
+      Gathering Blue was "like The Silent Patient" for sharing "Artists" and
+      "Artists, fiction", one topic. Two genuinely different shared subjects
+      still make a match.
+    model: book_candidate_scores
+    given:
+      - input: ref('fact_reading_history')
+        rows:
+          - {content_id: read1, rating: 10, has_rating: true}
+      - input: ref('dim_book')
+        rows:
+          - {content_id: read1, title: "The Silent Patient", primary_creator: "Alex Michaelides"}
+          - {content_id: cand_artists, title: "Gathering Blue", primary_creator: "Lois Lowry"}
+          - {content_id: cand_real, title: "The Paris Library", primary_creator: "Someone Else"}
+      - input: ref('dim_book_subject')
+        rows:
+          - {subject_id: 1, subject_name: "Artists", is_generic: false}
+          - {subject_id: 2, subject_name: "Artists, fiction", is_generic: false}
+          - {subject_id: 3, subject_name: "Psychological Thriller", is_generic: false}
+          - {subject_id: 4, subject_name: "Psychiatric hospitals", is_generic: false}
+      - input: ref('bridge_content_book_subject')
+        rows:
+          - {content_id: read1, subject_id: 1}
+          - {content_id: read1, subject_id: 2}
+          - {content_id: read1, subject_id: 3}
+          - {content_id: read1, subject_id: 4}
+          - {content_id: cand_artists, subject_id: 1}
+          - {content_id: cand_artists, subject_id: 2}
+          - {content_id: cand_real, subject_id: 3}
+          - {content_id: cand_real, subject_id: 4}
+    expect:
+      rows:
+        - {content_id: cand_artists, similar_to_content_id: null, shared_subject_count: 0}
+        - {content_id: cand_real, similar_to_content_id: read1, shared_subject_count: 2}
+
+  - name: similar_book_prefers_the_higher_rated_read
+    description: >
+      A candidate overlapping two liked reads is "like" the higher rated one,
+      even when the lower rated one shares more subjects.
+    model: book_candidate_scores
+    given:
+      - input: ref('fact_reading_history')
+        rows:
+          - {content_id: loved, rating: 10, has_rating: true}
+          - {content_id: liked, rating: 8, has_rating: true}
+      - input: ref('dim_book')
+        rows:
+          - {content_id: loved, title: "The Silent Patient", primary_creator: "Alex Michaelides"}
+          - {content_id: liked, title: "Never Lie", primary_creator: "Freida McFadden"}
+          - {content_id: cand, title: "Maidens", primary_creator: "Alex Michaelides"}
+      - input: ref('dim_book_subject')
+        rows:
+          - {subject_id: 1, subject_name: "Mystery", is_generic: false}
+          - {subject_id: 2, subject_name: "Thriller", is_generic: false}
+          - {subject_id: 3, subject_name: "Suspense", is_generic: false}
+      - input: ref('bridge_content_book_subject')
+        rows:
+          - {content_id: loved, subject_id: 1}
+          - {content_id: loved, subject_id: 2}
+          - {content_id: liked, subject_id: 1}
+          - {content_id: liked, subject_id: 2}
+          - {content_id: liked, subject_id: 3}
+          - {content_id: cand, subject_id: 1}
+          - {content_id: cand, subject_id: 2}
+          - {content_id: cand, subject_id: 3}
+    expect:
+      rows:
+        - {content_id: cand, similar_to_content_id: loved, shared_subject_count: 2}
+
+  - name: repeatedly_dismissed_authors_are_hidden
+    description: >
+      Two dismissed Chetan Bhagat books hide him. One dismissal never hides an
+      author, and an author read more often than dismissed stays.
+    model: dismissed_book_authors
+    given:
+      - input: source('meta', 'not_interested')
+        rows:
+          - {content_id: bhagat1}
+          - {content_id: bhagat2}
+          - {content_id: haig1}
+          - {content_id: haig2}
+          - {content_id: kawaguchi1}
+          - {content_id: amish1}
+          - {content_id: amish2}
+      - input: ref('dim_book')
+        rows:
+          - {content_id: bhagat1, primary_creator: "Chetan Bhagat"}
+          - {content_id: bhagat2, primary_creator: "Chetan Bhagat"}
+          - {content_id: haig1, primary_creator: "Matt Haig"}
+          - {content_id: haig2, primary_creator: "Matt Haig"}
+          - {content_id: haig_read, primary_creator: "Matt Haig"}
+          - {content_id: kawaguchi1, primary_creator: "Toshikazu Kawaguchi"}
+          - {content_id: amish1, primary_creator: "Amish Tripathi"}
+          - {content_id: amish2, primary_creator: "Amish Tripathi"}
+          - {content_id: amish_read1, primary_creator: "Amish Tripathi"}
+          - {content_id: amish_read2, primary_creator: "Amish Tripathi"}
+          - {content_id: amish_read3, primary_creator: "Amish Tripathi"}
+      - input: ref('fact_reading_history')
+        rows:
+          - {content_id: haig_read}
+          - {content_id: amish_read1}
+          - {content_id: amish_read2}
+          - {content_id: amish_read3}
+    expect:
+      rows:
+        - {author_key: "chetan bhagat", dismissed_count: 2, read_count: 0}
+        - {author_key: "matt haig", dismissed_count: 2, read_count: 1}

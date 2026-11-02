@@ -94,6 +94,16 @@ def test_book_with_both_signals_ranks_first():
     assert [p["content_id"] for p in picks] == ["b2", "b1", "b3"]
 
 
+def test_liked_author_outranks_a_tag_only_match():
+    # Two vague shared tags with a 10-rated read used to beat a new book by
+    # an author rated 8.4 (Amish Tripathi's Raavan, no Open Library subjects).
+    tag_only = book("b1", "Grace", score=10.0, signals=1, similar="coffee", shared=2, votes=900)
+    liked_author = book("b2", "Amish", score=8.4, signals=1, author_avg=8.4)
+    weak_author = book("b3", "Sadhguru", score=7.0, signals=1, author_avg=7.0)
+    picks = rec.select_book_picks([tag_only, weak_author, liked_author], count=3)
+    assert [p["content_id"] for p in picks] == ["b2", "b1", "b3"]
+
+
 def test_book_picks_vary_author_and_source_book():
     pool = [
         book("b1", "Haig", score=10.0, signals=1, similar="midnight", shared=3),
@@ -130,3 +140,24 @@ def test_book_picks_are_written_even_without_a_taste_profile(monkeypatch):
     assert rec.generate_recommendations(build_op_context()) == 0
     assert "DELETE FROM meta.daily_recommendations_books;" in cursor.executed
     assert any(sql.startswith("INSERT INTO meta.daily_recommendations_books") for sql in cursor.executed)
+
+
+def test_movie_candidates_are_cut_by_taste_not_popularity():
+    # Two English rows; the per-language cut keeps the taste match even
+    # though the other title is far more popular.
+    rows = [
+        ("popular", "Popular", "movie", None, 900.0, 7.5, ["Comedy"]),
+        ("match", "Match", "movie", "Nolan", 10.0, 7.5, ["Drama"]),
+    ]
+    cursor = FakeCursor(fetchone_results=[None], fetchall_results=[rows])
+    candidates = rec.get_candidates(cursor, GENRE_AVG, CREATOR_AVG, ["en"], limit=1)
+    assert [c[0] for c in candidates] == ["match"]
+
+
+def test_author_only_reason_reads_naturally():
+    one = book("b1", "Michiko Aoyama", score=10.0, signals=1, author_avg=10.0)
+    one["author_read_count"] = 1
+    assert rec.build_book_reason(one) == "By Michiko Aoyama: you rated their other book 10."
+    assert rec.build_book_reason(book("b2", "Amish", score=8.4, signals=1, author_avg=8.4)) == (
+        "By Amish: you rated 2 of their books 8.4 avg."
+    )

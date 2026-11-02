@@ -87,3 +87,14 @@ sources:
             tests:
               - not_null
               - unique
+
+  - name: meta
+    schema: meta
+    tables:
+      - name: not_interested
+        description: "Titles dismissed with the Not Interested button in Flask. Written live, one row per content_id."
+        columns:
+          - name: content_id
+            tests:
+              - not_null
+              - unique

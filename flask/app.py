@@ -365,8 +365,8 @@ def _fmt_rating(value) -> str:
 def find_book_replacement_pick(cur, exclude_ids):
     """Next best unread book from marts.book_candidate_scores, the same
     dbt model the weekly book picks rank from (recommendation_op.py), using
-    the same order: both signals with a good score first, then predicted
-    score, subject overlap and popularity. Also the same variety rules as
+    the same order: both signals with a good score first, then an author
+    rated 4+ stars, then predicted score, subject overlap and popularity. Also the same variety rules as
     select_book_picks: no second book by an author already on screen and at
     most two "similar to" the same read, relaxed only when nothing else is
     left. Without them a dismissal could add a second Freida McFadden."""
@@ -377,9 +377,11 @@ def find_book_replacement_pick(cur, exclude_ids):
         FROM marts.book_candidate_scores s
         JOIN marts.dim_book db ON db.content_id = s.content_id
         WHERE s.content_id NOT IN (SELECT content_id FROM meta.not_interested)
+          AND coalesce(lower(trim(s.primary_creator)), '') NOT IN (SELECT author_key FROM marts.dismissed_book_authors)
           AND s.content_id != ALL(%(exclude)s)
           {variety}
         ORDER BY (s.signal_count = 2 AND s.predicted_score >= 7) DESC,
+                 coalesce(s.author_avg_rating, 0) >= 8 DESC,
                  s.predicted_score DESC NULLS LAST,
                  s.shared_subject_count DESC,
                  s.vote_count DESC NULLS LAST
@@ -423,8 +425,10 @@ def find_book_replacement_pick(cur, exclude_ids):
     elif similar_title:
         reason = f"Like {similar_title}, which you rated {_fmt_rating(similar_rating)}: {shared}."
     elif author_avg is not None:
-        books = "book" if author_read_count == 1 else "books"
-        reason = f"By {creator}: you rated {author_read_count} of their {books} {_fmt_rating(author_avg)} avg."
+        if author_read_count == 1:
+            reason = f"By {creator}: you rated their other book {_fmt_rating(author_avg)}."
+        else:
+            reason = f"By {creator}: you rated {author_read_count} of their books {_fmt_rating(author_avg)} avg."
     elif creator:
         reason = f"By {creator}, a well-read title worth discovering."
     else:

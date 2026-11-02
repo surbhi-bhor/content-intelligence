@@ -40,3 +40,49 @@ jobs:
         run: |
           dbt deps --profiles-dir .
           dbt parse --profiles-dir .
+
+  dbt-build:
+    # Builds every model into an empty Postgres and runs the data and unit
+    # tests (book scoring rules live in dbt/models/marts/unit_tests.yml).
+    # The checks job above only parses the project.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15.18
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create raw and meta tables
+        run: python dagster/init_db.py
+
+      - name: dbt build
+        working-directory: dbt
+        run: |
+          dbt deps --profiles-dir .
+          dbt build --profiles-dir .
